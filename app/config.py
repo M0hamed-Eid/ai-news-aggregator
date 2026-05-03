@@ -36,7 +36,7 @@ class ScraperConfig:
     max_transcript_chars: int = 8000
 
     youtube_channels: List[dict] = field(default_factory=lambda: [
-        {"name": "Andrej Karpathy", "channel_id": "UCbXgNpp0jedKWcQiULLbDTA"},
+        {"name": "Andrej Karpathy", "channel_id": "UCXUPKJO5MZQN11PqgIvyuvQ"},
         {"name": "Yannic Kilcher",  "channel_id": "UCZHmQk67mSJgfCCTn7xBfew"},
         {"name": "AI Explained",   "channel_id": "UCNJ1Ymd5yFuUPtn21xtRbbw"},
     ])
