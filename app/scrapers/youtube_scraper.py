@@ -145,10 +145,11 @@ class YouTubeScraper(BaseScraper):
         only the spoken content.
         """
         try:
-            # list_transcripts() returns available transcript options for the video
+            # list() returns available transcript options for the video
             # Some videos have manual captions, some have auto-generated ones,
             # some have both. We want to find a usable English one.
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            ytt_api = YouTubeTranscriptApi()
+            transcript_list = ytt_api.list(video_id)
 
             # Try to find a manually-created English transcript first (higher quality)
             # If not found, fall back to auto-generated English
