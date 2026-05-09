@@ -16,20 +16,34 @@ logging.basicConfig(
 
 # Quick test — we'll expand this file as we build each phase
 from app.scrapers.youtube_scraper import YouTubeScraper
+from app.scrapers.blog_scraper import BlogScraper
 from app.config import config
 
-if __name__ == "__main__":
-    scraper = YouTubeScraper()
-    articles = scraper.scrape(hours_lookback=config.scraper.hours_lookback)
-
+def print_articles(articles, label):
     print(f"\n{'='*50}")
-    print(f"Scraped {len(articles)} articles")
+    print(f"{label}: {len(articles)} articles")
     print(f"{'='*50}\n")
-
     for article in articles:
-        print(f"Title:    {article.title}")
-        print(f"Channel:  {article.channel_or_author}")
-        print(f"URL:      {article.url}")
-        print(f"Date:     {article.published_at}")
-        print(f"Content:  {article.content[:200]}...")
+        print(f"Title:   {article.title}")
+        print(f"Source:  {article.channel_or_author}")
+        print(f"URL:     {article.url}")
+        print(f"Date:    {article.published_at}")
+        print(f"Content: {article.content[:200]}...")
         print("-" * 50)
+
+if __name__ == "__main__":
+    hours = config.scraper.hours_lookback
+ 
+    # --- YouTube ---
+    yt_scraper = YouTubeScraper()
+    yt_articles = yt_scraper.scrape(hours_lookback=hours)
+    print_articles(yt_articles, "YouTube")
+ 
+    # --- Blogs (Anthropic + OpenAI) ---
+    blog_scraper = BlogScraper()
+    blog_articles = blog_scraper.scrape(hours_lookback=hours)
+    print_articles(blog_articles, "Blogs")
+ 
+    # --- Combined ---
+    all_articles = yt_articles + blog_articles
+    print(f"\nTotal across all sources: {len(all_articles)} articles")
