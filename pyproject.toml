@@ -9,6 +9,7 @@ dependencies = [
     "feedparser>=6.0.12",
     "html-to-markdown>=3.3.2",
     "openai>=2.33.0",
+    "playwright>=1.59.0",
     "psycopg2-binary>=2.9.12",
     "pydantic>=2.13.3",
     "python-dotenv>=1.2.2",
