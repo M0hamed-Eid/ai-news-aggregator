@@ -61,7 +61,7 @@ def test_both_sources_represented():
 def test_fetch_article_content_handles_bad_url():
     """_fetch_article_content should return empty string for invalid URLs, not crash."""
     scraper = BlogScraper()
-    result = scraper._fetch_article_content("https://this-url-does-not-exist-xyz.com/article")
+    result = scraper._fetch_article_requests("https://this-url-does-not-exist-xyz.com/article")
     assert result == ""
 
 
@@ -69,5 +69,5 @@ def test_fetch_article_content_handles_timeout():
     """Should handle timeouts gracefully."""
     scraper = BlogScraper()
     # 10.255.255.1 is a non-routable IP — causes a fast connection failure
-    result = scraper._fetch_article_content("http://10.255.255.1/article")
+    result = scraper._fetch_article_requests("http://10.255.255.1/article")
     assert result == ""
