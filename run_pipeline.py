@@ -1,6 +1,7 @@
 # run_pipeline.py
 
 import logging
+from app.database import repository
 
 # basicConfig sets up the logging system for the whole application.
 # Every logger.info() / logger.warning() call in every file will use this format.
@@ -35,15 +36,18 @@ if __name__ == "__main__":
     hours = config.scraper.hours_lookback
  
     # --- YouTube ---
+    repo = repository()
     yt_scraper = YouTubeScraper()
     yt_articles = yt_scraper.scrape(hours_lookback=hours)
+    repo.bulk_create_youtube_videos(yt_articles)
     print_articles(yt_articles, "YouTube")
  
     # --- Blogs (Anthropic + OpenAI) ---
     blog_scraper = BlogScraper()
     blog_articles = blog_scraper.scrape(hours_lookback=hours)
     print_articles(blog_articles, "Blogs")
- 
+    
     # --- Combined ---
     all_articles = yt_articles + blog_articles
     print(f"\nTotal across all sources: {len(all_articles)} articles")
+    
