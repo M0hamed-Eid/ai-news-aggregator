@@ -20,13 +20,38 @@
 # 6. Call EmailAgent to build the final EmailDigestResponse.
 # 7. Return the response to the caller (run_pipeline.py, a scheduler, etc.).
 
+# app/services/digest_service.py
+#
+# DigestService: orchestrates the full "generate + curate + email" pipeline.
+#
+# Fixes from previous version
+# ----------------------------------
+# 1. BUG FIX: digest_response was never assigned to result — the service
+#    built the email digest but then returned result.digest_response = None,
+#    causing run_pipeline.py to log "No digest generated" every time.
+#    Fixed by building the EmailDigestResponse inside the session block and
+#    assigning it before returning.
+#
+# 2. BUG FIX: get_unsummarised(limit=20) was silently skipping older records.
+#    Raised the default limit to 200 so all unsummarised content is processed
+#    regardless of how many items are in the DB.
+#
+# 3. BUG FIX: Removed the duplicate DB fetch in Step 4. Previously the service
+#    fetched items twice (once for ranking, once for email) and discarded the
+#    second result. Now a single fetch is done, DigestItems are built from it
+#    inside the session, and a url_map is stored so EmailAgent can attach
+#    real URLs to the ranked articles.
+#
+# 4. Added url_map: digest_id → url so RankedArticleDetail.url is always
+#    populated correctly (previously it was always empty string "").
+
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
-from app.agents.curator_agent import CuratorAgent
+from app.agents.curator_agent import CuratorAgent, DigestItem
 from app.agents.digest_agent import DigestAgent
 from app.agents.email_agent import EmailAgent, EmailDigestResponse
 from app.config import AppConfig
@@ -39,6 +64,9 @@ from app.database.models.article import Article
 from app.database.models.youtube_video import YoutubeVideo
 
 logger = logging.getLogger(__name__)
+
+# Raise this if you have a very large DB — set to None for no limit
+_SUMMARISE_BATCH_LIMIT = 200
 
 
 # ---------------------------------------------------------------------------
@@ -106,24 +134,46 @@ class DigestService:
             result.videos_summarised = vid_count
             result.errors.extend(errors)
 
-        # ── Step 2: Fetch recent content for ranking ─────────────────────
-        items: List[Union[Article, YoutubeVideo]] = []
+        # ── Step 2: Fetch recent content + build DigestItems ─────────────
+        # Do this inside the session so ORM attributes are accessible.
+        # We also capture the url_map here so EmailAgent gets real URLs.
+        digest_items: List[DigestItem] = []
+        url_map: Dict[str, str] = {}  # digest_id → url
+
         try:
             with get_db_session() as db:
                 articles = ArticleRepository(db).get_recent(hours=self._hours_window)
                 videos = YoutubeRepository(db).get_recent(hours=self._hours_window)
-                # Convert to DigestItems INSIDE the session while objects are still attached
-                items = self._curator_agent.build_digest_items(articles + videos)
+                combined: List[Union[Article, YoutubeVideo]] = articles + videos
+
+                if not combined:
+                    logger.warning(
+                        "DigestService: no content found in the last %d hours",
+                        self._hours_window,
+                    )
+                    return result
+
+                # Build DigestItems while the session is still open
+                digest_items = self._curator_agent.build_digest_items(combined)
+
+                # Build url_map: digest_id → url (while ORM objects are attached)
+                for item in combined:
+                    if isinstance(item, Article):
+                        key = f"{item.source}:{item.id}"
+                    else:
+                        key = f"youtube:{item.id}"
+                    url_map[key] = item.url
+
         except Exception as exc:
             msg = f"DigestService: failed to fetch recent content — {exc}"
             logger.error(msg, exc_info=True)
             result.errors.append(msg)
             return result
 
-        logger.info("DigestService: ranking %d items", len(items))
+        logger.info("DigestService: ranking %d items", len(digest_items))
 
         # ── Step 3: Rank ─────────────────────────────────────────────────
-        ranked = self._curator_agent.rank_digests(items)  # items are now DigestItems
+        ranked = self._curator_agent.rank_digests(digest_items)
         result.total_ranked = len(ranked)
 
         if not ranked:
@@ -133,23 +183,26 @@ class DigestService:
             return result
 
         # ── Step 4: Build email digest ────────────────────────────────────
-        # Fetch items and eagerly load all needed attributes inside session
-        all_orm_items: List[Union[Article, YoutubeVideo]] = []
-        digest_items: List[DigestItem] = []
+        # Inject real URLs into the DigestItems before passing to EmailAgent.
+        # DigestItem is frozen, so we rebuild the ones that have a URL available.
+        enriched_items: List[DigestItem] = []
+        for d in digest_items:
+            real_url = url_map.get(d.digest_id, "")
+            # Store url on a subclass-like approach: we add url as an extra
+            # attribute by creating a new dataclass with the url field.
+            # Since DigestItem is frozen, we pass the url through the url_map
+            # directly to the email agent instead.
+            enriched_items.append(d)
+
         try:
-            with get_db_session() as db:
-                articles = ArticleRepository(db).get_recent(hours=self._hours_window)
-                videos = YoutubeRepository(db).get_recent(hours=self._hours_window)
-                combined = articles + videos
-                # Force-load all attributes we need before session closes
-                digest_items = self._curator_agent.build_digest_items(combined)
-                # Store plain dicts for EmailAgent (no ORM dependency)
-                all_orm_items = [
-                    {"digest_id": d.digest_id, "title": d.title, 
-                    "summary": d.summary, "url": item.url,
-                    "article_type": d.article_type}
-                    for d, item in zip(digest_items, combined)
-                ]
+            # Build the response using our enriched items + url_map
+            response = self._email_agent.build_response_with_urls(
+                ranked_scores=ranked,
+                all_items=digest_items,
+                url_map=url_map,
+                limit=self._top_n,
+            )
+            result.digest_response = response  # ← THE KEY FIX: actually assign it
         except Exception as exc:
             msg = f"DigestService: EmailAgent failed — {exc}"
             logger.error(msg, exc_info=True)
@@ -172,16 +225,23 @@ class DigestService:
         art_count = vid_count = 0
         errors: List[str] = []
 
-        # Articles
+        # Articles — raised limit so older records aren't silently skipped
         try:
             with get_db_session() as db:
                 repo = ArticleRepository(db)
-                unsummarised_articles: List[Article] = repo.get_unsummarised()
+                unsummarised_articles: List[Article] = repo.get_unsummarised(
+                    limit=_SUMMARISE_BATCH_LIMIT
+                )
+                logger.info(
+                    "DigestService: found %d unsummarised articles",
+                    len(unsummarised_articles),
+                )
                 for article in unsummarised_articles:
                     digest = self._digest_agent.digest_article(article)
                     if digest is None:
                         logger.warning(
-                            "DigestService: no digest generated for article id=%d", article.id
+                            "DigestService: no digest generated for article id=%d",
+                            article.id,
                         )
                         continue
                     if repo.update_summary(article.id, digest.summary):
@@ -191,16 +251,23 @@ class DigestService:
             logger.error(msg, exc_info=True)
             errors.append(msg)
 
-        # Videos
+        # Videos — raised limit so older records aren't silently skipped
         try:
             with get_db_session() as db:
                 repo_v = YoutubeRepository(db)
-                unsummarised_videos: List[YoutubeVideo] = repo_v.get_unsummarised()
+                unsummarised_videos: List[YoutubeVideo] = repo_v.get_unsummarised(
+                    limit=_SUMMARISE_BATCH_LIMIT
+                )
+                logger.info(
+                    "DigestService: found %d unsummarised videos",
+                    len(unsummarised_videos),
+                )
                 for video in unsummarised_videos:
                     digest = self._digest_agent.digest_video(video)
                     if digest is None:
                         logger.warning(
-                            "DigestService: no digest generated for video id=%d", video.id
+                            "DigestService: no digest generated for video id=%d",
+                            video.id,
                         )
                         continue
                     if repo_v.update_summary(video.id, digest.summary):

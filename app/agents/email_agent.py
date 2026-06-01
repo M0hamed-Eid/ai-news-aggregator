@@ -230,6 +230,56 @@ class EmailAgent:
             top_n=limit,
         )
 
+    def build_response_with_urls(
+        self,
+        *,
+        ranked_scores: List[RankedArticle],
+        all_items: List[DigestItem],
+        url_map: dict[str, str],
+        limit: int = 10,
+    ) -> EmailDigestResponse:
+        """
+        Same as build_response(), but injects real URLs coming from the database.
+        """
+
+        item_map: dict[str, DigestItem] = {
+            d.digest_id: d for d in all_items
+        }
+
+        details: List[RankedArticleDetail] = []
+
+        for ranked in ranked_scores[:limit]:
+            digest = item_map.get(ranked.digest_id)
+
+            if digest is None:
+                logger.warning(
+                    "EmailAgent: no DigestItem found for digest_id=%r, skipping",
+                    ranked.digest_id,
+                )
+                continue
+
+            details.append(
+                RankedArticleDetail(
+                    digest_id=ranked.digest_id,
+                    rank=ranked.rank,
+                    relevance_score=ranked.relevance_score,
+                    title=digest.title,
+                    summary=digest.summary,
+                    url=url_map.get(ranked.digest_id, ""),
+                    article_type=digest.article_type,
+                    reasoning=ranked.reasoning,
+                )
+            )
+
+        introduction = self._generate_introduction(details)
+
+        return EmailDigestResponse(
+            introduction=introduction,
+            articles=details,
+            total_ranked=len(ranked_scores),
+            top_n=limit,
+        )
+
     def build_response_from_orm(
         self,
         *,
