@@ -1,20 +1,19 @@
 # run_pipeline.py
 #
-# This is the main entry point for the full data pipeline.
+# Main entry point for the full data pipeline.
 #
-# What it does, in order:
-#   1.  Load config + validate DB connection
-#   2.  Scrape YouTube transcripts
-#   3.  Scrape OpenAI + Anthropic blog articles
-#   4.  Insert all results into PostgreSQL (duplicates are silently skipped)
-#   5.  Print a summary of what was inserted
+# Phase 1 — scrape YouTube + blogs → insert into PostgreSQL
+# Phase 2 — generate AI summaries (DigestAgent) for unsummarised records
+# Phase 3 — rank content (CuratorAgent) + build + send email (EmailAgent)
 #
 # Usage:
 #   python run_pipeline.py
-#   python run_pipeline.py --hours 48        # override lookback window
-#   python run_pipeline.py --source youtube  # only run YouTube scraper
-#   python run_pipeline.py --source blogs    # only run blog scraper
-#   python run_pipeline.py --dry-run         # scrape but do NOT write to DB
+#   python run_pipeline.py --hours 48            # override lookback window
+#   python run_pipeline.py --source youtube      # only YouTube scraper
+#   python run_pipeline.py --source blogs        # only blog scraper
+#   python run_pipeline.py --skip-digest         # skip Phase 2+3
+#   python run_pipeline.py --skip-email          # skip email send (print only)
+#   python run_pipeline.py --dry-run             # scrape but do NOT write to DB
 
 import argparse
 import logging
@@ -25,9 +24,7 @@ from typing import List
 
 from dotenv import load_dotenv
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Load .env BEFORE any other project imports that read env vars
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Load .env BEFORE any project imports that read env vars ──────────────────
 load_dotenv()
 
 logging.basicConfig(
@@ -39,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Result summary dataclass
+# Result summary
 # ─────────────────────────────────────────────────────────────────────────────
 @dataclass
 class PipelineResult:
@@ -53,42 +50,54 @@ class PipelineResult:
     articles_skipped:  int = 0
     articles_errors:   int = 0
 
+    digest_articles_summarised: int = 0
+    digest_videos_summarised:   int = 0
+    digest_total_ranked:        int = 0
+    digest_errors: List[str] = None
+
+    def __post_init__(self) -> None:
+        if self.digest_errors is None:
+            self.digest_errors = []
+
     def print_summary(self) -> None:
         logger.info("=" * 60)
         logger.info("PIPELINE SUMMARY")
         logger.info("=" * 60)
         logger.info(
-            f"  YouTube  : scraped={self.youtube_scraped:>4}  "
-            f"inserted={self.youtube_inserted:>4}  "
-            f"skipped={self.youtube_skipped:>4}  "
-            f"errors={self.youtube_errors:>4}"
+            "  YouTube  : scraped=%4d  inserted=%4d  skipped=%4d  errors=%4d",
+            self.youtube_scraped, self.youtube_inserted,
+            self.youtube_skipped, self.youtube_errors,
         )
         logger.info(
-            f"  Articles : scraped={self.articles_scraped:>4}  "
-            f"inserted={self.articles_inserted:>4}  "
-            f"skipped={self.articles_skipped:>4}  "
-            f"errors={self.articles_errors:>4}"
+            "  Articles : scraped=%4d  inserted=%4d  skipped=%4d  errors=%4d",
+            self.articles_scraped, self.articles_inserted,
+            self.articles_skipped, self.articles_errors,
         )
-        total_scraped   = self.youtube_scraped   + self.articles_scraped
-        total_inserted  = self.youtube_inserted  + self.articles_inserted
-        total_skipped   = self.youtube_skipped   + self.articles_skipped
+        total_scraped  = self.youtube_scraped  + self.articles_scraped
+        total_inserted = self.youtube_inserted + self.articles_inserted
+        total_skipped  = self.youtube_skipped  + self.articles_skipped
         logger.info(
-            f"  TOTAL    : scraped={total_scraped:>4}  "
-            f"inserted={total_inserted:>4}  "
-            f"skipped={total_skipped:>4}"
+            "  TOTAL    : scraped=%4d  inserted=%4d  skipped=%4d",
+            total_scraped, total_inserted, total_skipped,
         )
+        if self.digest_articles_summarised or self.digest_videos_summarised:
+            logger.info(
+                "  Digest   : articles summarised=%4d  videos summarised=%4d  ranked=%4d",
+                self.digest_articles_summarised,
+                self.digest_videos_summarised,
+                self.digest_total_ranked,
+            )
+        if self.digest_errors:
+            for err in self.digest_errors:
+                logger.warning("  Digest error: %s", err)
         logger.info("=" * 60)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Validation helpers
+# Validation helper
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _validate_scraped_article(item) -> List[str]:
-    """
-    Lightweight validation before we attempt to insert into the DB.
-    Returns a list of error strings (empty list = valid).
-    """
     errors = []
     if not item.title or not item.title.strip():
         errors.append("missing title")
@@ -102,37 +111,36 @@ def _validate_scraped_article(item) -> List[str]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Phase runners
+# Phase runners — Phase 1 (scraping)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_youtube_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
     from app.scrapers.youtube_scraper import YouTubeScraper
     from app.database import get_db_session, YoutubeRepository
 
-    logger.info(f"[YouTube] Starting scrape  (hours_lookback={hours})")
+    logger.info("[YouTube] Starting scrape  (hours_lookback=%d)", hours)
     try:
         scraper = YouTubeScraper()
         items   = scraper.scrape(hours_lookback=hours)
     except Exception as exc:
-        logger.error(f"[YouTube] Scraper crashed: {exc}", exc_info=True)
+        logger.error("[YouTube] Scraper crashed: %s", exc, exc_info=True)
         result.youtube_errors += 1
         return
 
     result.youtube_scraped = len(items)
-    logger.info(f"[YouTube] Scraped {len(items)} items")
+    logger.info("[YouTube] Scraped %d items", len(items))
 
-    # Validate
     valid_items = []
     for item in items:
         errors = _validate_scraped_article(item)
         if errors:
-            logger.warning(f"[YouTube] Skipping invalid item '{item.title}': {errors}")
+            logger.warning("[YouTube] Skipping invalid item %r: %s", item.title, errors)
             result.youtube_errors += 1
         else:
             valid_items.append(item)
 
     if dry_run:
-        logger.info(f"[YouTube] DRY RUN — would insert {len(valid_items)} items")
+        logger.info("[YouTube] DRY RUN — would insert %d items", len(valid_items))
         return
 
     if not valid_items:
@@ -141,12 +149,12 @@ def run_youtube_phase(hours: int, dry_run: bool, result: PipelineResult) -> None
 
     try:
         with get_db_session() as db:
-            repo     = YoutubeRepository(db)
+            repo = YoutubeRepository(db)
             inserted, skipped = repo.bulk_create(valid_items)
             result.youtube_inserted = inserted
             result.youtube_skipped  = skipped
     except Exception as exc:
-        logger.error(f"[YouTube] DB insertion failed: {exc}", exc_info=True)
+        logger.error("[YouTube] DB insertion failed: %s", exc, exc_info=True)
         result.youtube_errors += 1
 
 
@@ -154,30 +162,29 @@ def run_blogs_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
     from app.scrapers.blog_scraper import BlogScraper
     from app.database import get_db_session, ArticleRepository
 
-    logger.info(f"[Blogs] Starting scrape  (hours_lookback={hours})")
+    logger.info("[Blogs] Starting scrape  (hours_lookback=%d)", hours)
     try:
         scraper = BlogScraper()
         items   = scraper.scrape(hours_lookback=hours)
     except Exception as exc:
-        logger.error(f"[Blogs] Scraper crashed: {exc}", exc_info=True)
+        logger.error("[Blogs] Scraper crashed: %s", exc, exc_info=True)
         result.articles_errors += 1
         return
 
     result.articles_scraped = len(items)
-    logger.info(f"[Blogs] Scraped {len(items)} items")
+    logger.info("[Blogs] Scraped %d items", len(items))
 
-    # Validate
     valid_items = []
     for item in items:
         errors = _validate_scraped_article(item)
         if errors:
-            logger.warning(f"[Blogs] Skipping invalid item '{item.title}': {errors}")
+            logger.warning("[Blogs] Skipping invalid item %r: %s", item.title, errors)
             result.articles_errors += 1
         else:
             valid_items.append(item)
 
     if dry_run:
-        logger.info(f"[Blogs] DRY RUN — would insert {len(valid_items)} items")
+        logger.info("[Blogs] DRY RUN — would insert %d items", len(valid_items))
         return
 
     if not valid_items:
@@ -186,13 +193,72 @@ def run_blogs_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
 
     try:
         with get_db_session() as db:
-            repo     = ArticleRepository(db)
+            repo = ArticleRepository(db)
             inserted, skipped = repo.bulk_create(valid_items)
             result.articles_inserted = inserted
             result.articles_skipped  = skipped
     except Exception as exc:
-        logger.error(f"[Blogs] DB insertion failed: {exc}", exc_info=True)
+        logger.error("[Blogs] DB insertion failed: %s", exc, exc_info=True)
         result.articles_errors += 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 2+3 runner — digest + email
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run_digest_phase(
+    hours: int,
+    dry_run: bool,
+    skip_email: bool,
+    result: PipelineResult,
+) -> None:
+    from app.config import config
+    from app.services.digest_service import DigestService
+    from app.services.email_sender import EmailSender
+
+    logger.info("[Digest] Starting digest + ranking phase")
+
+    service = DigestService(
+        config=config,
+        hours_window=hours,
+        top_n=10,
+        dry_run=dry_run,
+    )
+    digest_result = service.run()
+
+    result.digest_articles_summarised = digest_result.articles_summarised
+    result.digest_videos_summarised   = digest_result.videos_summarised
+    result.digest_total_ranked        = digest_result.total_ranked
+    result.digest_errors              = digest_result.errors
+
+    if digest_result.digest_response is None:
+        logger.warning("[Digest] No digest generated (possibly no content in window).")
+        return
+
+    markdown = digest_result.digest_response.to_markdown()
+
+    if skip_email:
+        logger.info("[Digest] --skip-email set — printing digest to stdout:\n\n%s", markdown)
+        return
+
+    sender = EmailSender()
+    if not sender.is_configured:
+        logger.info(
+            "[Digest] Email credentials not configured — printing digest to stdout.\n\n%s",
+            markdown,
+        )
+        return
+
+    recipient = os.getenv("GMAIL_ADDRESS", "")
+    sent = sender.send(
+        to_address=recipient,
+        subject=f"Your AI News Digest — {digest_result.digest_response.articles[0].title[:50] if digest_result.digest_response.articles else 'Top Stories'}",
+        body_markdown=markdown,
+    )
+    if sent:
+        logger.info("[Digest] Email delivered to %s", recipient)
+    else:
+        logger.warning("[Digest] Email delivery failed — check logs above.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -218,11 +284,25 @@ def main() -> None:
         action="store_true",
         help="Scrape but do NOT write to the database",
     )
+    parser.add_argument(
+        "--skip-digest",
+        action="store_true",
+        help="Skip Phase 2+3 (digest generation + email)",
+    )
+    parser.add_argument(
+        "--skip-email",
+        action="store_true",
+        help="Run digest generation but print the result instead of sending email",
+    )
     args = parser.parse_args()
 
     logger.info("=" * 60)
     logger.info("AI NEWS AGGREGATOR — PIPELINE START")
-    logger.info(f"  hours={args.hours}  source={args.source}  dry_run={args.dry_run}")
+    logger.info(
+        "  hours=%d  source=%s  dry_run=%s  skip_digest=%s  skip_email=%s",
+        args.hours, args.source, args.dry_run,
+        args.skip_digest, args.skip_email,
+    )
     logger.info("=" * 60)
 
     # ── Step 1: check DB connection (skip in dry-run mode) ────────────────
@@ -239,20 +319,25 @@ def main() -> None:
 
     result = PipelineResult()
 
-    # ── Step 2: run scrapers ───────────────────────────────────────────────
+    # ── Step 2: scraping ──────────────────────────────────────────────────
     if args.source in ("all", "youtube"):
         run_youtube_phase(args.hours, args.dry_run, result)
 
     if args.source in ("all", "blogs"):
         run_blogs_phase(args.hours, args.dry_run, result)
 
-    # ── Step 3: summary ───────────────────────────────────────────────────
+    # ── Step 3: digest + email ────────────────────────────────────────────
+    if not args.skip_digest and not args.dry_run:
+        run_digest_phase(args.hours, args.dry_run, args.skip_email, result)
+    elif args.skip_digest:
+        logger.info("[Digest] Skipped (--skip-digest)")
+
+    # ── Step 4: summary ───────────────────────────────────────────────────
     result.print_summary()
 
-    # Exit with non-zero code if there were errors (useful for CI/cron alerting)
-    total_errors = result.youtube_errors + result.articles_errors
+    total_errors = result.youtube_errors + result.articles_errors + len(result.digest_errors)
     if total_errors > 0:
-        logger.warning(f"Pipeline completed with {total_errors} error(s)")
+        logger.warning("Pipeline completed with %d error(s)", total_errors)
         sys.exit(1)
 
     logger.info("Pipeline completed successfully.")
