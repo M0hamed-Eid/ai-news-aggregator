@@ -7,6 +7,7 @@ requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.18.4",
     "feedparser>=6.0.12",
+    "groq>=1.4.0",
     "html-to-markdown>=3.3.2",
     "openai>=2.33.0",
     "playwright>=1.59.0",

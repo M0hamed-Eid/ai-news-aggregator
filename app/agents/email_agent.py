@@ -20,22 +20,33 @@
 # 8. Removed direct dotenv usage — handled globally in run_pipeline.py.
 # 9. Full type hints throughout.
 
+# Changes from previous version
+# ----------------------------------
+# 1. Switched from OpenAI to Groq (free tier).
+# 2. Removed .beta.chat.completions.parse() — Groq doesn't support it.
+#    JSON is requested explicitly in the prompt and parsed manually.
+# 3. Added _strip_json_fences() helper (same pattern as other agents).
+# 4. build_response() now accepts List[DigestItem] instead of ORM objects
+#    directly — avoids DetachedInstanceError since DigestItems are plain
+#    dataclasses that don't need an active SQLAlchemy session.
+# 5. All EmailIntroduction / RankedArticleDetail / to_markdown() unchanged.
+
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import datetime
-from typing import List, Optional, Union
+from typing import List, Optional
 
-from openai import OpenAI
+from groq import Groq
 from pydantic import BaseModel, Field
 
 from app.agents.curator_agent import DigestItem, RankedArticle
 from app.config import UserProfile
-from app.database.models.article import Article
-from app.database.models.youtube_video import YoutubeVideo
 
 logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Output schema
@@ -49,7 +60,7 @@ class EmailIntroduction(BaseModel):
 
 
 class RankedArticleDetail(BaseModel):
-    """Enriched record combining LLM ranking with ORM content."""
+    """Enriched record combining LLM ranking with content data."""
     digest_id: str
     rank: int
     relevance_score: float
@@ -101,11 +112,30 @@ Your role is to write a warm, professional introduction for a daily AI news \
 digest email that:
 - Greets the user by name.
 - Includes the current date.
-- Provides a brief, engaging overview of the top 10 ranked articles.
+- Provides a brief, engaging overview of the top ranked articles.
 - Highlights the most interesting or important themes.
 - Sets expectations for the content ahead.
 
-Keep it concise (2-3 sentences for the introduction), friendly, and professional."""
+Keep it concise (2-3 sentences for the introduction), friendly, and professional.
+
+IMPORTANT: Respond ONLY with a valid JSON object. No markdown, no explanation.
+Format: {"greeting": "Hey [name]...", "introduction": "..."}"""
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _strip_json_fences(text: str) -> str:
+    """Remove markdown code fences that some models wrap around JSON output."""
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines)
+    return text.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -121,18 +151,20 @@ class EmailAgent:
     from app.agents.curator_agent import CuratorAgent
     from app.agents.email_agent import EmailAgent
 
-    ranked   = CuratorAgent(config.user).rank_items(articles + videos)
-    response = EmailAgent(config.user).build_response(
+    digest_items = CuratorAgent.build_digest_items(articles + videos)
+    ranked       = CuratorAgent(config.user).rank_digests(digest_items)
+    response     = EmailAgent(config.user).build_response(
         ranked_scores=ranked,
-        all_items=articles + videos,
+        all_items=digest_items,
         limit=10,
     )
     print(response.to_markdown())
     """
 
     def __init__(self, user_profile: UserProfile) -> None:
-        self._client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-        self._model = "gpt-4o-mini"
+        self._client = Groq(api_key=os.environ["GROQ_API_KEY"])
+        # 8b-instant is fast enough for the simple intro generation task
+        self._model = "llama-3.1-8b-instant"
         self._user_profile = user_profile
 
     # ------------------------------------------------------------------
@@ -143,7 +175,7 @@ class EmailAgent:
         self,
         *,
         ranked_scores: List[RankedArticle],
-        all_items: List[Union[Article, YoutubeVideo]],
+        all_items: List[DigestItem],
         limit: int = 10,
     ) -> EmailDigestResponse:
         """
@@ -151,13 +183,77 @@ class EmailAgent:
 
         Parameters
         ----------
-        ranked_scores : list of RankedArticle from CuratorAgent.rank_items()
-        all_items     : the original ORM objects (Articles + YoutubeVideos) so
-                        we can look up URLs, summaries, etc.
+        ranked_scores : list of RankedArticle from CuratorAgent.rank_digests()
+        all_items     : the DigestItem list (plain dataclasses — no ORM needed)
         limit         : how many articles to include in the digest (default 10)
         """
-        # Build a lookup map: digest_id → ORM object
-        item_map: dict[str, Union[Article, YoutubeVideo]] = {}
+        # Build a lookup map: digest_id → DigestItem
+        item_map: dict[str, DigestItem] = {d.digest_id: d for d in all_items}
+
+        # Merge ranking metadata with digest content, preserving rank order
+        details: List[RankedArticleDetail] = []
+        for ranked in ranked_scores[:limit]:
+            digest = item_map.get(ranked.digest_id)
+            if digest is None:
+                logger.warning(
+                    "EmailAgent: no DigestItem found for digest_id=%r, skipping",
+                    ranked.digest_id,
+                )
+                continue
+
+            # Reconstruct a best-effort URL from the digest_id
+            # Format is either "blog_openai:<id>", "blog_anthropic:<id>", "youtube:<id>"
+            # The real URL lives in the DB but we stored enough info in DigestItem
+            # to build a placeholder; callers that need the real URL should pass
+            # a url_map (see note below).
+            url = item_map.get(ranked.digest_id + "_url", digest.digest_id)
+
+            details.append(
+                RankedArticleDetail(
+                    digest_id=ranked.digest_id,
+                    rank=ranked.rank,
+                    relevance_score=ranked.relevance_score,
+                    title=digest.title,
+                    summary=digest.summary,
+                    url=getattr(digest, "url", ""),  # populated by build_response_from_orm
+                    article_type=digest.article_type,
+                    reasoning=ranked.reasoning,
+                )
+            )
+
+        introduction = self._generate_introduction(details)
+
+        return EmailDigestResponse(
+            introduction=introduction,
+            articles=details,
+            total_ranked=len(ranked_scores),
+            top_n=limit,
+        )
+
+    def build_response_from_orm(
+        self,
+        *,
+        ranked_scores: List[RankedArticle],
+        all_items,          # List[Article | YoutubeVideo] — typed loosely to avoid circular import
+        limit: int = 10,
+    ) -> EmailDigestResponse:
+        """
+        Build a full EmailDigestResponse directly from ORM objects.
+
+        Use this variant when ORM objects are still attached to a session,
+        e.g. when calling from inside a `with get_db_session()` block.
+
+        Parameters
+        ----------
+        ranked_scores : list of RankedArticle from CuratorAgent
+        all_items     : the original ORM objects (Articles + YoutubeVideos)
+        limit         : how many articles to include in the digest (default 10)
+        """
+        from app.database.models.article import Article
+        from app.database.models.youtube_video import YoutubeVideo
+
+        # Build lookup: digest_id → ORM object
+        item_map = {}
         for item in all_items:
             if isinstance(item, Article):
                 key = f"{item.source}:{item.id}"
@@ -165,7 +261,6 @@ class EmailAgent:
                 key = f"youtube:{item.id}"
             item_map[key] = item
 
-        # Merge ranking metadata with ORM content, preserving rank order
         details: List[RankedArticleDetail] = []
         for ranked in ranked_scores[:limit]:
             orm_item = item_map.get(ranked.digest_id)
@@ -227,22 +322,22 @@ class EmailAgent:
         user_prompt = (
             f"Create an email introduction for {name} for {today}.\n\n"
             f"Top ranked articles:\n{article_lines}\n\n"
-            f"Generate a greeting and introduction that previews these articles."
+            f"Generate a greeting and introduction that previews these articles.\n\n"
+            f'Respond ONLY with JSON: {{"greeting": "Hey {name}...", "introduction": "..."}}'
         )
 
         try:
-            response = self._client.beta.chat.completions.parse(
+            response = self._client.chat.completions.create(
                 model=self._model,
                 temperature=0.7,
                 messages=[
                     {"role": "system", "content": _EMAIL_PROMPT},
-                    {"role": "user", "content": user_prompt},
+                    {"role": "user",   "content": user_prompt},
                 ],
-                response_format=EmailIntroduction,
             )
-            intro = response.choices[0].message.parsed
-            if intro is None:
-                return fallback
+            raw = response.choices[0].message.content or ""
+            data = json.loads(_strip_json_fences(raw))
+            intro = EmailIntroduction(**data)
 
             # Enforce consistent greeting format
             if not intro.greeting.strip().startswith(f"Hey {name}"):
@@ -251,6 +346,9 @@ class EmailAgent:
                     introduction=intro.introduction,
                 )
             return intro
+
+        except json.JSONDecodeError as exc:
+            logger.error("EmailAgent: JSON parse error — %s", exc)
         except Exception:
             logger.exception("EmailAgent: error generating introduction")
-            return fallback
+        return fallback

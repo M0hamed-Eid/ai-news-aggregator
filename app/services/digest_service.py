@@ -110,24 +110,20 @@ class DigestService:
         items: List[Union[Article, YoutubeVideo]] = []
         try:
             with get_db_session() as db:
-                items += ArticleRepository(db).get_recent(hours=self._hours_window)
-                items += YoutubeRepository(db).get_recent(hours=self._hours_window)
+                articles = ArticleRepository(db).get_recent(hours=self._hours_window)
+                videos = YoutubeRepository(db).get_recent(hours=self._hours_window)
+                # Convert to DigestItems INSIDE the session while objects are still attached
+                items = self._curator_agent.build_digest_items(articles + videos)
         except Exception as exc:
             msg = f"DigestService: failed to fetch recent content — {exc}"
             logger.error(msg, exc_info=True)
             result.errors.append(msg)
             return result
 
-        if not items:
-            logger.warning(
-                "DigestService: no content found in the last %d hours", self._hours_window
-            )
-            return result
-
         logger.info("DigestService: ranking %d items", len(items))
 
         # ── Step 3: Rank ─────────────────────────────────────────────────
-        ranked = self._curator_agent.rank_items(items)
+        ranked = self._curator_agent.rank_digests(items)  # items are now DigestItems
         result.total_ranked = len(ranked)
 
         if not ranked:
@@ -137,12 +133,23 @@ class DigestService:
             return result
 
         # ── Step 4: Build email digest ────────────────────────────────────
+        # Fetch items and eagerly load all needed attributes inside session
+        all_orm_items: List[Union[Article, YoutubeVideo]] = []
+        digest_items: List[DigestItem] = []
         try:
-            result.digest_response = self._email_agent.build_response(
-                ranked_scores=ranked,
-                all_items=items,
-                limit=self._top_n,
-            )
+            with get_db_session() as db:
+                articles = ArticleRepository(db).get_recent(hours=self._hours_window)
+                videos = YoutubeRepository(db).get_recent(hours=self._hours_window)
+                combined = articles + videos
+                # Force-load all attributes we need before session closes
+                digest_items = self._curator_agent.build_digest_items(combined)
+                # Store plain dicts for EmailAgent (no ORM dependency)
+                all_orm_items = [
+                    {"digest_id": d.digest_id, "title": d.title, 
+                    "summary": d.summary, "url": item.url,
+                    "article_type": d.article_type}
+                    for d, item in zip(digest_items, combined)
+                ]
         except Exception as exc:
             msg = f"DigestService: EmailAgent failed — {exc}"
             logger.error(msg, exc_info=True)

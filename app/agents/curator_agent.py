@@ -22,14 +22,25 @@
 # 8. Full type hints and docstrings added throughout.
 # 9. Removed direct dotenv usage — handled globally in run_pipeline.py.
 
+
+# Changes from previous version
+# ----------------------------------
+# 1. Switched from OpenAI to Groq (free tier).
+# 2. Removed .beta.chat.completions.parse() — Groq doesn't support it.
+#    JSON is requested explicitly in the prompt and parsed manually.
+# 3. Uses llama-3.3-70b-versatile for better reasoning during ranking.
+# 4. Added _strip_json_fences() helper (same pattern as digest_agent).
+# 5. All DigestItem / RankedArticle / build_digest_items logic unchanged.
+
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass
 from typing import List, Union
 
-from openai import OpenAI
+from groq import Groq
 from pydantic import BaseModel, Field
 
 from app.config import UserProfile
@@ -37,6 +48,7 @@ from app.database.models.article import Article
 from app.database.models.youtube_video import YoutubeVideo
 
 logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # View-model: flat representation fed to the LLM
@@ -71,10 +83,6 @@ class RankedArticle(BaseModel):
     reasoning: str = Field(description="Brief explanation of why this article is ranked here")
 
 
-class RankedDigestList(BaseModel):
-    articles: List[RankedArticle] = Field(description="List of ranked articles")
-
-
 # ---------------------------------------------------------------------------
 # System-prompt builder
 # ---------------------------------------------------------------------------
@@ -100,7 +108,20 @@ Scoring Guidelines:
 - 0.0-2.9:  Low relevance, minimal alignment, little value
 
 Rank articles from most relevant (rank 1) to least relevant.
-Ensure each article has a unique rank."""
+Ensure each article has a unique rank.
+
+IMPORTANT: Respond ONLY with a valid JSON object. No markdown, no explanation.
+Format:
+{
+  "articles": [
+    {
+      "digest_id": "...",
+      "relevance_score": 8.5,
+      "rank": 1,
+      "reasoning": "..."
+    }
+  ]
+}"""
 
 
 def _build_system_prompt(profile: UserProfile) -> str:
@@ -111,6 +132,22 @@ def _build_system_prompt(profile: UserProfile) -> str:
         f"  Name: {profile.name}\n"
         f"\nInterests:\n{interests_text}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _strip_json_fences(text: str) -> str:
+    """Remove markdown code fences that some models wrap around JSON output."""
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines)
+    return text.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -129,8 +166,9 @@ class CuratorAgent:
     """
 
     def __init__(self, user_profile: UserProfile) -> None:
-        self._client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-        self._model = "gpt-4.1"
+        self._client = Groq(api_key=os.environ["GROQ_API_KEY"])
+        # llama-3.3-70b-versatile: stronger reasoning, better for ranking tasks
+        self._model = "llama-3.3-70b-versatile"
         self._user_profile = user_profile
         self._system_prompt = _build_system_prompt(user_profile)
 
@@ -170,27 +208,30 @@ class CuratorAgent:
             f"Rank these {len(digests)} AI news digests based on the user profile:\n\n"
             f"{digest_text}\n\n"
             f"Provide a relevance score (0.0-10.0) and rank (1-{len(digests)}) "
-            f"for each article, ordered from most to least relevant."
+            f"for each article, ordered from most to least relevant.\n\n"
+            f"Respond ONLY with valid JSON matching this format:\n"
+            f'{{"articles": [{{"digest_id": "...", "relevance_score": 8.5, '
+            f'"rank": 1, "reasoning": "..."}}]}}'
         )
 
         try:
-            response = self._client.beta.chat.completions.parse(
+            response = self._client.chat.completions.create(
                 model=self._model,
                 temperature=0.3,
                 messages=[
                     {"role": "system", "content": self._system_prompt},
-                    {"role": "user", "content": user_prompt},
+                    {"role": "user",   "content": user_prompt},
                 ],
-                response_format=RankedDigestList,
             )
-            result = response.choices[0].message.parsed
-            if result is None:
-                return []
-            # Sort by rank so callers get a clean ascending list
-            return sorted(result.articles, key=lambda a: a.rank)
+            raw = response.choices[0].message.content or ""
+            data = json.loads(_strip_json_fences(raw))
+            articles = [RankedArticle(**a) for a in data["articles"]]
+            return sorted(articles, key=lambda a: a.rank)
+        except json.JSONDecodeError as exc:
+            logger.error("CuratorAgent: JSON parse error — %s", exc)
         except Exception:
             logger.exception("CuratorAgent: error ranking %d digests", len(digests))
-            return []
+        return []
 
     # ------------------------------------------------------------------
     # Static helper — ORM → DigestItem conversion

@@ -8,18 +8,26 @@
 #
 # Usage:
 #   python run_pipeline.py
-#   python run_pipeline.py --hours 48            # override lookback window
-#   python run_pipeline.py --source youtube      # only YouTube scraper
-#   python run_pipeline.py --source blogs        # only blog scraper
-#   python run_pipeline.py --skip-digest         # skip Phase 2+3
-#   python run_pipeline.py --skip-email          # skip email send (print only)
-#   python run_pipeline.py --dry-run             # scrape but do NOT write to DB
+#   python run_pipeline.py --hours 48             # override lookback window
+#   python run_pipeline.py --source youtube       # only YouTube scraper
+#   python run_pipeline.py --source blogs         # only blog scraper
+#   python run_pipeline.py --skip-scraping        # skip Phase 1, use existing DB content
+#   python run_pipeline.py --skip-digest          # skip Phase 2+3
+#   python run_pipeline.py --skip-email           # run digest but print instead of sending
+#   python run_pipeline.py --dry-run              # scrape but do NOT write to DB
+#
+# Changes from previous version
+# ----------------------------------
+# 1. Added --skip-scraping CLI flag so Phase 1 can be bypassed when all
+#    content is already in the DB (saves significant time during dev/testing).
+# 2. Switched AI provider from OpenAI to Groq throughout.
+#    OPENAI_API_KEY is no longer required; GROQ_API_KEY is used instead.
 
 import argparse
 import logging
 import sys
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 from dotenv import load_dotenv
@@ -38,6 +46,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 # Result summary
 # ─────────────────────────────────────────────────────────────────────────────
+
 @dataclass
 class PipelineResult:
     youtube_scraped:   int = 0
@@ -53,11 +62,7 @@ class PipelineResult:
     digest_articles_summarised: int = 0
     digest_videos_summarised:   int = 0
     digest_total_ranked:        int = 0
-    digest_errors: List[str] = None
-
-    def __post_init__(self) -> None:
-        if self.digest_errors is None:
-            self.digest_errors = []
+    digest_errors: List[str] = field(default_factory=list)
 
     def print_summary(self) -> None:
         logger.info("=" * 60)
@@ -111,7 +116,7 @@ def _validate_scraped_article(item) -> List[str]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Phase runners — Phase 1 (scraping)
+# Phase 1 runners — scraping
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_youtube_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
@@ -249,10 +254,15 @@ def run_digest_phase(
         )
         return
 
-    recipient = os.getenv("GMAIL_ADDRESS", "")
+    recipient = os.getenv("RECIPIENT_EMAIL") or os.getenv("GMAIL_ADDRESS", "")
     sent = sender.send(
         to_address=recipient,
-        subject=f"Your AI News Digest — {digest_result.digest_response.articles[0].title[:50] if digest_result.digest_response.articles else 'Top Stories'}",
+        subject=(
+            f"Your AI News Digest — "
+            f"{digest_result.digest_response.articles[0].title[:50]}"
+            if digest_result.digest_response.articles
+            else "Your AI News Digest — Top Stories"
+        ),
         body_markdown=markdown,
     )
     if sent:
@@ -266,18 +276,49 @@ def run_digest_phase(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="AI News Aggregator Pipeline")
+    parser = argparse.ArgumentParser(
+        description="AI News Aggregator Pipeline",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Full run (scrape + digest + email)
+  python run_pipeline.py
+
+  # Skip scraping — use content already in the DB (fast, for dev/testing)
+  python run_pipeline.py --skip-scraping
+
+  # Skip scraping AND email — just regenerate summaries and print the digest
+  python run_pipeline.py --skip-scraping --skip-email
+
+  # Only scrape, do not run digest phase
+  python run_pipeline.py --skip-digest
+
+  # Scrape only YouTube, skip digest
+  python run_pipeline.py --source youtube --skip-digest
+
+  # Scrape but do not write to DB (dry run)
+  python run_pipeline.py --dry-run
+
+  # Custom lookback window
+  python run_pipeline.py --hours 48
+        """,
+    )
     parser.add_argument(
         "--hours",
         type=int,
         default=int(os.getenv("HOURS_LOOKBACK", "144")),
-        help="How many hours back to scrape (default: 144 = 6 days)",
+        help="How many hours back to look for content (default: 144 = 6 days)",
     )
     parser.add_argument(
         "--source",
         choices=["all", "youtube", "blogs"],
         default="all",
-        help="Which scraper(s) to run",
+        help="Which scraper(s) to run (default: all)",
+    )
+    parser.add_argument(
+        "--skip-scraping",
+        action="store_true",
+        help="Skip Phase 1 entirely — use content already stored in the DB",
     )
     parser.add_argument(
         "--dry-run",
@@ -299,9 +340,10 @@ def main() -> None:
     logger.info("=" * 60)
     logger.info("AI NEWS AGGREGATOR — PIPELINE START")
     logger.info(
-        "  hours=%d  source=%s  dry_run=%s  skip_digest=%s  skip_email=%s",
-        args.hours, args.source, args.dry_run,
-        args.skip_digest, args.skip_email,
+        "  hours=%d  source=%s  skip_scraping=%s  dry_run=%s  "
+        "skip_digest=%s  skip_email=%s",
+        args.hours, args.source, args.skip_scraping,
+        args.dry_run, args.skip_digest, args.skip_email,
     )
     logger.info("=" * 60)
 
@@ -319,23 +361,32 @@ def main() -> None:
 
     result = PipelineResult()
 
-    # ── Step 2: scraping ──────────────────────────────────────────────────
-    if args.source in ("all", "youtube"):
-        run_youtube_phase(args.hours, args.dry_run, result)
+    # ── Step 2: scraping (Phase 1) ────────────────────────────────────────
+    if args.skip_scraping:
+        logger.info("[Scraping] Skipped (--skip-scraping) — using existing DB content")
+    else:
+        if args.source in ("all", "youtube"):
+            run_youtube_phase(args.hours, args.dry_run, result)
 
-    if args.source in ("all", "blogs"):
-        run_blogs_phase(args.hours, args.dry_run, result)
+        if args.source in ("all", "blogs"):
+            run_blogs_phase(args.hours, args.dry_run, result)
 
-    # ── Step 3: digest + email ────────────────────────────────────────────
-    if not args.skip_digest and not args.dry_run:
-        run_digest_phase(args.hours, args.dry_run, args.skip_email, result)
-    elif args.skip_digest:
+    # ── Step 3: digest + email (Phase 2+3) ───────────────────────────────
+    if args.skip_digest:
         logger.info("[Digest] Skipped (--skip-digest)")
+    elif args.dry_run:
+        logger.info("[Digest] Skipped (--dry-run implies no digest phase)")
+    else:
+        run_digest_phase(args.hours, args.dry_run, args.skip_email, result)
 
-    # ── Step 4: summary ───────────────────────────────────────────────────
+    # ── Step 4: print summary ─────────────────────────────────────────────
     result.print_summary()
 
-    total_errors = result.youtube_errors + result.articles_errors + len(result.digest_errors)
+    total_errors = (
+        result.youtube_errors
+        + result.articles_errors
+        + len(result.digest_errors)
+    )
     if total_errors > 0:
         logger.warning("Pipeline completed with %d error(s)", total_errors)
         sys.exit(1)
