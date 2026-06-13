@@ -49,6 +49,7 @@ from app.database.models.youtube_video import YoutubeVideo
 
 logger = logging.getLogger(__name__)
 
+_RANKING_BATCH_SIZE = 15  # max items per LLM ranking call
 
 # ---------------------------------------------------------------------------
 # View-model: flat representation fed to the LLM
@@ -193,12 +194,37 @@ class CuratorAgent:
         """
         Rank a pre-built list of DigestItem objects.
 
-        Use this when you have already converted ORM objects to DigestItem,
-        e.g. when iterating in batches across the pipeline.
+        Items are processed in batches of _RANKING_BATCH_SIZE to avoid
+        hitting Groq's output token limit (the JSON response for 40+ items
+        was being truncated, causing a JSON parse error).
         """
         if not digests:
             return []
 
+        # If small enough, rank in one shot
+        if len(digests) <= _RANKING_BATCH_SIZE:
+            return self._rank_batch(digests)
+
+        # Otherwise: rank each batch, collect top results, do a final pass
+        batch_winners: List[DigestItem] = []
+        for i in range(0, len(digests), _RANKING_BATCH_SIZE):
+            batch = digests[i : i + _RANKING_BATCH_SIZE]
+            ranked_batch = self._rank_batch(batch)
+            if not ranked_batch:
+                continue
+            # Keep top-5 from each batch for the final merge pass
+            top_ids = {r.digest_id for r in ranked_batch[:5]}
+            batch_winners.extend(d for d in batch if d.digest_id in top_ids)
+
+        if not batch_winners:
+            return []
+
+        # Final pass: rank just the winners from all batches
+        return self._rank_batch(batch_winners)
+
+
+    def _rank_batch(self, digests: List[DigestItem]) -> List[RankedArticle]:
+        """Send one batch to the LLM and return sorted RankedArticle list."""
         digest_text = "\n\n".join(
             f"ID: {d.digest_id}\nTitle: {d.title}\nSummary: {d.summary}\nType: {d.article_type}"
             for d in digests
@@ -218,6 +244,7 @@ class CuratorAgent:
             response = self._client.chat.completions.create(
                 model=self._model,
                 temperature=0.3,
+                max_tokens=4096,          # ← explicit limit prevents silent truncation
                 messages=[
                     {"role": "system", "content": self._system_prompt},
                     {"role": "user",   "content": user_prompt},
