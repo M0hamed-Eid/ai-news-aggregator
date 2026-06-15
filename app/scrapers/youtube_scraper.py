@@ -19,8 +19,8 @@ from app.config import config
 logger = logging.getLogger(__name__)
  
 # Random delay between transcript fetches — avoids YouTube rate limiting
-MIN_DELAY = 2.0
-MAX_DELAY = 5.0
+MIN_DELAY = 5
+MAX_DELAY = 12
  
 # Residential proxy URL from .env
 # Format: http://user:pass@host:port  OR  http://host:port
