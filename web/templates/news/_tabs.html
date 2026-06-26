@@ -1,0 +1,10 @@
+{% url 'news:article_list' as articles_url %}
+{% url 'news:video_list' as videos_url %}
+<ul class="nav nav-tabs mb-4">
+  <li class="nav-item">
+    <a class="nav-link {% if active_tab == 'articles' %}active{% endif %}" href="{{ articles_url }}">Articles</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if active_tab == 'videos' %}active{% endif %}" href="{{ videos_url }}">Videos</a>
+  </li>
+</ul>

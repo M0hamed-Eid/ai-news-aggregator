@@ -1,0 +1,8 @@
+# Django web application — isolated from the pipeline's own dependencies.
+Django>=5.2,<5.3            # 5.2 LTS
+django-environ>=0.12        # parse DATABASE_URL / .env
+psycopg2-binary>=2.9.9      # PostgreSQL driver
+gunicorn>=23.0              # production WSGI server
+whitenoise>=6.7             # static files in production
+markdown>=3.6               # render cleaned article/transcript bodies
+bleach>=6.1                 # sanitize the rendered HTML

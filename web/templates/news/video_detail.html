@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ video.title }} · AI News{% endblock %}
+{% block content %}
+
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{% url 'news:video_list' %}">Videos</a></li>
+    <li class="breadcrumb-item active" aria-current="page">{{ video.title|truncatewords:8 }}</li>
+  </ol>
+</nav>
+
+<article class="bg-white rounded-3 shadow-sm p-4 p-md-5">
+  <div class="ratio ratio-16x9 mb-4">
+    <iframe src="{{ video.embed_url }}" title="{{ video.title }}"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowfullscreen></iframe>
+  </div>
+
+  <div class="mb-2">
+    <span class="badge text-bg-danger">YouTube</span>
+    <span class="text-muted small ms-1">{{ video.channel_name }} · {{ video.published_at|date:"F j, Y" }}</span>
+  </div>
+  <h1 class="h3 mb-3">{{ video.title }}</h1>
+
+  {% if video.tag_list %}
+    <div class="mb-3">
+      {% for tag in video.tag_list %}<span class="badge rounded-pill text-bg-light border me-1">{{ tag }}</span>{% endfor %}
+    </div>
+  {% endif %}
+
+  {% if video.summary %}
+    <div class="alert alert-light border"><strong>Summary.</strong> {{ video.summary }}</div>
+  {% endif %}
+
+  {% if transcript %}
+    <h2 class="h5 mt-4">Transcript</h2>
+    <div class="article-body text-body-secondary">{{ transcript }}</div>
+  {% endif %}
+
+  <hr class="my-4">
+  <a href="{{ video.watch_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-danger">Watch on YouTube ↗</a>
+  <a href="{% url 'news:video_list' %}" class="btn btn-link">Back to videos</a>
+</article>
+
+{% endblock %}

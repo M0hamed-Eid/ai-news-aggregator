@@ -26,14 +26,18 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-ai_news}
       POSTGRES_USER: ${POSTGRES_USER:-ai_news_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      # DEV ONLY: trust auth — allow connections without a valid password so
+      # local dev never gets blocked on password mismatches. Do NOT use in prod.
+      POSTGRES_HOST_AUTH_METHOD: trust
       # Tune connection settings for a lightweight dev container.
       # In production, use PgBouncer or an RDS parameter group instead.
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
 
     ports:
-      # HOST:CONTAINER — expose only on localhost so the DB is not reachable
-      # from the public internet on dev machines.
-      - "${POSTGRES_PORT:-5432}:5432"
+      # HOST:CONTAINER — host port 5433 (hardcoded, not from .env) because a
+      # native Windows PostgreSQL service already owns host port 5432 and
+      # shadows this container. The DB still listens on 5432 inside the container.
+      - "5433:5432"
 
     volumes:
       # Named volume — data survives container restarts and rebuilds.
