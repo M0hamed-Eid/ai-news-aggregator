@@ -287,6 +287,12 @@ def run_digest_phase(
     html_body = render_email_html(digest_result.digest_response)
     text_body = digest_result.digest_response.to_markdown()
 
+    # TEMP DEBUG — remove once we find the bug
+    with open("debug_last_email.html", "w", encoding="utf-8") as f:
+        f.write(html_body)
+    logger.info("[Digest] Wrote debug_last_email.html")
+
+
     if skip_email:
         logger.info("[Digest] --skip-email set — printing digest to stdout:\n\n%s", html_body)
         return

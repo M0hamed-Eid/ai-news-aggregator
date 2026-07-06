@@ -172,7 +172,7 @@ class DigestService:
                         key = f"youtube:{item.id}"
                         content_meta[key] = {
                             "url": item.url,
-                            "image_url": youtube_thumbnail_url(item.video_id),
+                            "image_url": youtube_thumbnail_url(item.video_id) if item.video_id else None,
                             "reading_minutes": estimate_watch_minutes(len((item.content or "").split())),
                         }
 

@@ -39,6 +39,7 @@ from pydantic import BaseModel
 
 from app.database.models.article import Article
 from app.database.models.youtube_video import YoutubeVideo
+from app.llm.client_factory import get_llm_client_and_model
 
 logger = logging.getLogger(__name__)
 
