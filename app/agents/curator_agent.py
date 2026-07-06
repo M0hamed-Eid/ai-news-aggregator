@@ -40,12 +40,12 @@ import os
 from dataclasses import dataclass
 from typing import List, Union
 
-from groq import Groq
 from pydantic import BaseModel, Field
 
 from app.config import UserProfile
 from app.database.models.article import Article
 from app.database.models.youtube_video import YoutubeVideo
+from app.llm.client_factory import get_llm_client_and_model
 
 logger = logging.getLogger(__name__)
 
@@ -167,9 +167,7 @@ class CuratorAgent:
     """
 
     def __init__(self, user_profile: UserProfile) -> None:
-        self._client = Groq(api_key=os.environ["GROQ_API_KEY"])
-        # llama-3.3-70b-versatile: stronger reasoning, better for ranking tasks
-        self._model = "llama-3.3-70b-versatile"
+        self._client, self._model = get_llm_client_and_model("reasoning")
         self._user_profile = user_profile
         self._system_prompt = _build_system_prompt(user_profile)
 

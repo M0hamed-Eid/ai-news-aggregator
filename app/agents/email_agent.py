@@ -39,11 +39,11 @@ import os
 from datetime import datetime
 from typing import List, Optional
 
-from groq import Groq
 from pydantic import BaseModel, Field
 
 from app.agents.curator_agent import DigestItem, RankedArticle
 from app.config import UserProfile
+from app.llm.client_factory import get_llm_client_and_model
 
 logger = logging.getLogger(__name__)
 
@@ -164,9 +164,7 @@ class EmailAgent:
     """
 
     def __init__(self, user_profile: UserProfile) -> None:
-        self._client = Groq(api_key=os.environ["GROQ_API_KEY"])
-        # 8b-instant is fast enough for the simple intro generation task
-        self._model = "llama-3.1-8b-instant"
+        self._client, self._model = get_llm_client_and_model("simple")
         self._user_profile = user_profile
 
     # ------------------------------------------------------------------

@@ -34,7 +34,6 @@ import logging
 import os
 from typing import Optional
 
-from groq import Groq
 from pydantic import BaseModel
 
 from app.database.models.article import Article
@@ -100,9 +99,7 @@ class DigestAgent:
     """Generates a title + summary digest for a single Article or YoutubeVideo."""
 
     def __init__(self) -> None:
-        self._client = Groq(api_key=os.environ["GROQ_API_KEY"])
-        # llama-3.1-8b-instant: fast, free, good enough for summarisation
-        self._model = "llama-3.1-8b-instant"
+        self._client, self._model = get_llm_client_and_model("simple")
 
     # ------------------------------------------------------------------
     # Public interface — accepts ORM objects directly
