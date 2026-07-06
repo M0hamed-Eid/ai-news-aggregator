@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 .wolf/*
 !.wolf/OPENWOLF.md
+debug_last_email.html
