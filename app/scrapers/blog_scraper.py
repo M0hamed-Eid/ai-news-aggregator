@@ -29,8 +29,9 @@ import logging
 import time
 import random
 import os
+import re
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
  
 from html_to_markdown import convert
  
@@ -46,7 +47,19 @@ MAX_DELAY = 3.5
 PROXY_URL          = os.getenv("RESIDENTIAL_PROXY_URL", "")
 OPENAI_RSS         = "https://openai.com/news/rss.xml"
 ANTHROPIC_NEWS_URL = "https://www.anthropic.com/news"
- 
+
+_META_TAG_RE = re.compile(r'<meta[^>]+>', re.IGNORECASE)
+_CONTENT_ATTR_RE = re.compile(r'content=["\']([^"\']+)["\']', re.IGNORECASE)
+
+
+def _extract_og_image(html: str) -> Optional[str]:
+    """Find the article's og:image meta tag, if it has one."""
+    for tag in _META_TAG_RE.findall(html):
+        if "og:image" in tag.lower():
+            match = _CONTENT_ATTR_RE.search(tag)
+            if match:
+                return match.group(1)
+    return None
  
 class BlogScraper(BaseScraper):
  
@@ -167,7 +180,7 @@ class BlogScraper(BaseScraper):
  
                     # Navigate to the article — safe now because we already
                     # captured all card data as plain Python strings above
-                    content = self._fetch_article_playwright(page, url)
+                    content, image_url = self._fetch_article_playwright(page, url)
                     if not content:
                         logger.warning(f"  No content for: {title}")
                         continue
@@ -180,6 +193,7 @@ class BlogScraper(BaseScraper):
                         channel_or_author="Anthropic",
                         published_at=published_at,
                         video_id=None,
+                        image_url=image_url,
                     ))
  
                 browser.close()
@@ -189,18 +203,21 @@ class BlogScraper(BaseScraper):
  
         return articles
  
-    def _fetch_article_playwright(self, page, url: str) -> str:
+    def _fetch_article_playwright(self, page, url: str) -> tuple[str, Optional[str]]:
         try:
             page.goto(url, wait_until="networkidle", timeout=20_000)
+            image_url = page.evaluate(
+                "() => document.querySelector('meta[property=\"og:image\"]')?.content || null"
+            )
             el   = page.query_selector("article") or page.query_selector("main")
             text = el.inner_text() if el else page.inner_text()
             text = text.strip()
             if len(text) > MAX_ARTICLE_CHARS:
                 text = text[:MAX_ARTICLE_CHARS] + "... [article truncated]"
-            return text
+            return text, image_url
         except Exception as e:
             logger.warning(f"  Could not fetch {url}: {e}")
-            return ""
+            return "", None
  
     # ------------------------------------------------------------------
     # OpenAI — RSS + requests
@@ -229,7 +246,7 @@ class BlogScraper(BaseScraper):
                 continue
  
             self._sleep()
-            content = self._fetch_article_requests(url)
+            content, image_url = self._fetch_article_content_and_image(url)
  
             if not content:
                 content = entry.get("summary", "")
@@ -248,35 +265,38 @@ class BlogScraper(BaseScraper):
                 channel_or_author="OpenAI",
                 published_at=published_at,
                 video_id=None,
+                image_url=image_url,
             ))
  
         return articles
- 
-    def _fetch_article_requests(self, url: str) -> str:
+    
+    def _fetch_article_content_and_image(self, url: str) -> tuple[str, Optional[str]]:
+        """
+        Fetch one article page and return (markdown_content, og_image_url).
+        One network request — image and content are both pulled from the
+        same response instead of fetching the page twice.
+        """
         try:
             response = requests.get(
                 url,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/120.0.0.0 Safari/537.36"
-                    )
-                },
+                headers={"User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                )},
                 proxies=self._proxies,
                 timeout=REQUEST_TIMEOUT,
             )
             response.raise_for_status()
- 
-            # html-to-markdown 3.x returns ConversionResult (a Rust-backed object).
-            # The markdown text lives in  result.content  (NOT .markdown, NOT str())
+
+            image_url = _extract_og_image(response.text)
+
             result = convert(response.text)
-            text   = result.content or ""
- 
+            text = result.content or ""
             if len(text) > MAX_ARTICLE_CHARS:
                 text = text[:MAX_ARTICLE_CHARS] + "... [article truncated]"
-            return text.strip()
- 
+            return text.strip(), image_url
+
         except requests.exceptions.Timeout:
             logger.warning(f"  Timeout: {url}")
         except requests.exceptions.HTTPError as e:
@@ -285,7 +305,12 @@ class BlogScraper(BaseScraper):
             logger.error(f"  Request error: {url}: {e}")
         except Exception as e:
             logger.error(f"  Unexpected error: {url}: {e}")
-        return ""
+        return "", None
+        
+    def _fetch_article_requests(self, url: str) -> str:
+        """Kept for backward compatibility with existing tests — content only."""
+        content, _ = self._fetch_article_content_and_image(url)
+        return content
  
     # ------------------------------------------------------------------
     # Helpers

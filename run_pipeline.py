@@ -207,6 +207,49 @@ def run_blogs_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
         result.articles_errors += 1
 
 
+def run_embedding_phase(result: PipelineResult) -> None:
+    """
+    Embeds every article/video that doesn't have an embedding yet.
+    Uses summary if it exists (cleaner, shorter), falls back to the raw
+    content/title otherwise — so this can run right after scraping, without
+    waiting for the summarization phase to finish first.
+    """
+    from app.database import get_db_session
+    from app.database.repositories.embedding_repository import EmbeddingRepository
+    from app.database.repositories.article_repository import ArticleRepository
+    from app.database.repositories.youtube_repository import YoutubeRepository
+    from app.embeddings.embedding_service import embed_text
+
+    logger.info("[Embeddings] Starting embedding phase")
+    embedded, errors = 0, 0
+
+    with get_db_session() as db:
+        emb_repo = EmbeddingRepository(db)
+
+        for article in ArticleRepository(db).get_all(limit=1000):
+            if emb_repo.exists_for("article", article.id):
+                continue
+            text = article.summary or (article.content or "")[:2000] or article.title
+            try:
+                emb_repo.upsert("article", article.id, embed_text(text))
+                embedded += 1
+            except Exception:
+                logger.exception(f"[Embeddings] Failed on article id={article.id}")
+                errors += 1
+
+        for video in YoutubeRepository(db).get_all(limit=1000):
+            if emb_repo.exists_for("youtube_video", video.id):
+                continue
+            text = video.summary or (video.content or "")[:2000] or video.title
+            try:
+                emb_repo.upsert("youtube_video", video.id, embed_text(text))
+                embedded += 1
+            except Exception:
+                logger.exception(f"[Embeddings] Failed on video id={video.id}")
+                errors += 1
+
+    logger.info(f"[Embeddings] Done. embedded={embedded} errors={errors}")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Phase 2+3 runner — digest + email
 # ─────────────────────────────────────────────────────────────────────────────
@@ -220,6 +263,7 @@ def run_digest_phase(
     from app.config import config
     from app.services.digest_service import DigestService
     from app.services.email_sender import EmailSender
+    from app.services.email_template import render_email_html
 
     logger.info("[Digest] Starting digest + ranking phase")
 
@@ -240,17 +284,18 @@ def run_digest_phase(
         logger.warning("[Digest] No digest generated (possibly no content in window).")
         return
 
-    markdown = digest_result.digest_response.to_markdown()
+    html_body = render_email_html(digest_result.digest_response)
+    text_body = digest_result.digest_response.to_markdown()
 
     if skip_email:
-        logger.info("[Digest] --skip-email set — printing digest to stdout:\n\n%s", markdown)
+        logger.info("[Digest] --skip-email set — printing digest to stdout:\n\n%s", html_body)
         return
 
     sender = EmailSender()
     if not sender.is_configured:
         logger.info(
             "[Digest] Email credentials not configured — printing digest to stdout.\n\n%s",
-            markdown,
+            html_body,
         )
         return
 
@@ -263,7 +308,8 @@ def run_digest_phase(
             if digest_result.digest_response.articles
             else "Your AI News Digest — Top Stories"
         ),
-        body_markdown=markdown,
+        body_html=html_body,
+        body_text=text_body,
     )
     if sent:
         logger.info("[Digest] Email delivered to %s", recipient)
@@ -335,6 +381,7 @@ Examples:
         action="store_true",
         help="Run digest generation but print the result instead of sending email",
     )
+    
     args = parser.parse_args()
 
     logger.info("=" * 60)
@@ -370,6 +417,13 @@ Examples:
 
         if args.source in ("all", "blogs"):
             run_blogs_phase(args.hours, args.dry_run, result)
+
+    # ── Step 3: embedding (Phase 1.5) ─────────────────────────────────────
+    if not args.dry_run:
+        logger.info("[Embedding] Starting embedding phase")
+        run_embedding_phase(result)
+    else:
+        logger.info("[Embedding] Skipped (dry-run mode)")
 
     # ── Step 3: digest + email (Phase 2+3) ───────────────────────────────
     if args.skip_digest:

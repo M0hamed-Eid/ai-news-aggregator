@@ -58,7 +58,8 @@ class EmailSender:
         *,
         to_address: str,
         subject: str,
-        body_markdown: str,
+        body_html: str,
+        body_text: Optional[str] = None,
     ) -> bool:
         """
         Send an email.
@@ -82,7 +83,8 @@ class EmailSender:
             from_address=self._address,
             to_address=to_address,
             subject=subject,
-            body_markdown=body_markdown,
+            body_html=body_html,
+            body_text=body_text,
         )
 
         try:
@@ -113,7 +115,8 @@ class EmailSender:
         from_address: str,
         to_address: str,
         subject: str,
-        body_markdown: str,
+        body_html: str,
+        body_text: Optional[str] = None,
     ) -> MIMEMultipart:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
@@ -124,8 +127,8 @@ class EmailSender:
         msg.attach(MIMEText(body_markdown, "plain", "utf-8"))
 
         # Minimal HTML wrapper
-        html_body = _markdown_to_html(body_markdown)
-        msg.attach(MIMEText(html_body, "html", "utf-8"))
+        msg.attach(MIMEText(body_text, "plain", "utf-8"))
+        msg.attach(MIMEText(body_html, "html", "utf-8"))
 
         return msg
 
@@ -134,48 +137,48 @@ class EmailSender:
 # Minimal Markdown → HTML converter (no extra deps)
 # ---------------------------------------------------------------------------
 
-def _markdown_to_html(md: str) -> str:
-    """
-    Very lightweight Markdown → HTML conversion for digest emails.
+# def _markdown_to_html(md: str) -> str:
+#     """
+#     Very lightweight Markdown → HTML conversion for digest emails.
 
-    Handles: h2 headings, horizontal rules, bold links, paragraphs.
-    For a richer renderer add `markdown` or `mistune` to pyproject.toml
-    and replace this function.
-    """
-    import html as html_lib
-    import re
+#     Handles: h2 headings, horizontal rules, bold links, paragraphs.
+#     For a richer renderer add `markdown` or `mistune` to pyproject.toml
+#     and replace this function.
+#     """
+#     import html as html_lib
+#     import re
 
-    lines = md.split("\n")
-    html_lines: list[str] = [
-        "<html><body style='font-family:sans-serif;max-width:680px;margin:auto;padding:16px;'>"
-    ]
+#     lines = md.split("\n")
+#     html_lines: list[str] = [
+#         "<html><body style='font-family:sans-serif;max-width:680px;margin:auto;padding:16px;'>"
+#     ]
 
-    for line in lines:
-        stripped = line.strip()
+#     for line in lines:
+#         stripped = line.strip()
 
-        if stripped.startswith("## "):
-            text = html_lib.escape(stripped[3:])
-            html_lines.append(f"<h2 style='color:#1a1a1a;'>{text}</h2>")
+#         if stripped.startswith("## "):
+#             text = html_lib.escape(stripped[3:])
+#             html_lines.append(f"<h2 style='color:#1a1a1a;'>{text}</h2>")
 
-        elif stripped == "---":
-            html_lines.append("<hr style='border:none;border-top:1px solid #ddd;margin:16px 0;'>")
+#         elif stripped == "---":
+#             html_lines.append("<hr style='border:none;border-top:1px solid #ddd;margin:16px 0;'>")
 
-        elif re.match(r"^\[.+\]\(.+\)$", stripped):
-            # Bare link line: [label](url)
-            m = re.match(r"^\[(.+)\]\((.+)\)$", stripped)
-            if m:
-                label = html_lib.escape(m.group(1))
-                url = html_lib.escape(m.group(2))
-                html_lines.append(
-                    f"<p><a href='{url}' style='color:#0066cc;'>{label}</a></p>"
-                )
+#         elif re.match(r"^\[.+\]\(.+\)$", stripped):
+#             # Bare link line: [label](url)
+#             m = re.match(r"^\[(.+)\]\((.+)\)$", stripped)
+#             if m:
+#                 label = html_lib.escape(m.group(1))
+#                 url = html_lib.escape(m.group(2))
+#                 html_lines.append(
+#                     f"<p><a href='{url}' style='color:#0066cc;'>{label}</a></p>"
+#                 )
 
-        elif stripped == "":
-            html_lines.append("")  # keep spacing
+#         elif stripped == "":
+#             html_lines.append("")  # keep spacing
 
-        else:
-            text = html_lib.escape(stripped)
-            html_lines.append(f"<p style='color:#333;line-height:1.6;'>{text}</p>")
+#         else:
+#             text = html_lib.escape(stripped)
+#             html_lines.append(f"<p style='color:#333;line-height:1.6;'>{text}</p>")
 
-    html_lines.append("</body></html>")
-    return "\n".join(html_lines)
+#     html_lines.append("</body></html>")
+#     return "\n".join(html_lines)

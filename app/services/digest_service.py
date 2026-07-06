@@ -63,6 +63,9 @@ from app.database import (
 from app.database.models.article import Article
 from app.database.models.youtube_video import YoutubeVideo
 
+from app.utils.reading_time import estimate_reading_minutes, estimate_watch_minutes
+from app.utils.youtube import youtube_thumbnail_url
+
 logger = logging.getLogger(__name__)
 
 # Raise this if you have a very large DB — set to None for no limit
@@ -138,7 +141,7 @@ class DigestService:
         # Do this inside the session so ORM attributes are accessible.
         # We also capture the url_map here so EmailAgent gets real URLs.
         digest_items: List[DigestItem] = []
-        url_map: Dict[str, str] = {}  # digest_id → url
+        content_meta: Dict[str, dict] = {}  # digest_id → {url, image_url, reading_minutes}
 
         try:
             with get_db_session() as db:
@@ -160,9 +163,18 @@ class DigestService:
                 for item in combined:
                     if isinstance(item, Article):
                         key = f"{item.source}:{item.id}"
+                        content_meta[key] = {
+                            "url": item.url,
+                            "image_url": item.image_url,
+                            "reading_minutes": estimate_reading_minutes(len((item.content or "").split())),
+                        }
                     else:
                         key = f"youtube:{item.id}"
-                    url_map[key] = item.url
+                        content_meta[key] = {
+                            "url": item.url,
+                            "image_url": youtube_thumbnail_url(item.video_id),
+                            "reading_minutes": estimate_watch_minutes(len((item.content or "").split())),
+                        }
 
         except Exception as exc:
             msg = f"DigestService: failed to fetch recent content — {exc}"
@@ -183,23 +195,11 @@ class DigestService:
             return result
 
         # ── Step 4: Build email digest ────────────────────────────────────
-        # Inject real URLs into the DigestItems before passing to EmailAgent.
-        # DigestItem is frozen, so we rebuild the ones that have a URL available.
-        enriched_items: List[DigestItem] = []
-        for d in digest_items:
-            real_url = url_map.get(d.digest_id, "")
-            # Store url on a subclass-like approach: we add url as an extra
-            # attribute by creating a new dataclass with the url field.
-            # Since DigestItem is frozen, we pass the url through the url_map
-            # directly to the email agent instead.
-            enriched_items.append(d)
-
         try:
-            # Build the response using our enriched items + url_map
             response = self._email_agent.build_response_with_urls(
                 ranked_scores=ranked,
                 all_items=digest_items,
-                url_map=url_map,
+                content_meta=content_meta,
                 limit=self._top_n,
             )
             result.digest_response = response  # ← THE KEY FIX: actually assign it

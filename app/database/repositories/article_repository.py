@@ -72,6 +72,7 @@ class ArticleRepository(BaseRepository[Article]):
             source       = scraped.source,
             author       = scraped.channel_or_author,
             content      = scraped.content,
+            image_url    = scraped.image_url,
             published_at = _ensure_tz(scraped.published_at),
         )
         self.db.add(article)
@@ -126,6 +127,7 @@ class ArticleRepository(BaseRepository[Article]):
                 "source":       item.source,
                 "author":       item.channel_or_author,
                 "content":      item.content,
+                "image_url":    item.image_url,
                 "published_at": _ensure_tz(item.published_at),
             }
             for item in scraped_list

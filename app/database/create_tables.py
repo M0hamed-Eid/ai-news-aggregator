@@ -35,10 +35,18 @@ def create_all_tables() -> None:
         )
         sys.exit(1)
 
+    # Step 1.5: enable the pgvector extension (one-time, safe to re-run)
+    logger.info("Enabling pgvector extension...")
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        conn.commit()
+    logger.info("pgvector extension enabled")
+    
     # Step 2: import ALL models so they register themselves with Base.metadata.
     # If you add a new model file, add its import here.
     logger.info("Loading models...")
-    from app.database.models import Article, YoutubeVideo  # noqa: F401
+    from app.database.models import Article, YoutubeVideo, Embedding  # noqa: F401
 
     # Step 3: create tables
     logger.info("Creating tables (CREATE TABLE IF NOT EXISTS)...")

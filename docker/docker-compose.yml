@@ -15,7 +15,7 @@ services:
   # PostgreSQL — primary data store
   # ---------------------------------------------------------------------------
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: ai_news_db
 
     # Restart automatically unless you explicitly stop the container.

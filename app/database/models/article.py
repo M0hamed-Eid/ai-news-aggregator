@@ -93,6 +93,12 @@ class Article(Base):
         default=None,
         comment="Comma-separated topic tags assigned by the curator agent",
     )
+    image_url: Mapped[str | None] = mapped_column(
+        String(2048),
+        nullable=True,
+        default=None,
+        comment="Hero image scraped from the article's og:image tag, if available",
+    )
 
     # -------------------------------------------------------------------------
     # Timestamps
@@ -164,6 +170,7 @@ class Article(Base):
             "author":       self.author,
             "summary":      self.summary,
             "tags":         self.tags,
+            "image_url":    self.image_url,
             "published_at": self.published_at.isoformat() if self.published_at else None,
             "created_at":   self.created_at.isoformat()   if self.created_at   else None,
         }

@@ -27,6 +27,7 @@ class ScrapedArticle:
     channel_or_author: str          # e.g. "Andrej Karpathy"
     published_at: datetime
     video_id: Optional[str] = None  # only relevant for YouTube videos
+    image_url: Optional[str] = None  # hero image for articles; videos use their thumbnail instead
 
 
 class BaseScraper(ABC):

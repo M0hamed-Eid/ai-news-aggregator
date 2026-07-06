@@ -69,6 +69,8 @@ class RankedArticleDetail(BaseModel):
     url: str
     article_type: str
     reasoning: Optional[str] = None
+    image_url: Optional[str] = None
+    reading_minutes: Optional[int] = 1
 
 
 class EmailDigestResponse(BaseModel):
@@ -235,7 +237,7 @@ class EmailAgent:
         *,
         ranked_scores: List[RankedArticle],
         all_items: List[DigestItem],
-        url_map: dict[str, str],
+        content_meta: dict[str, dict],
         limit: int = 10,
     ) -> EmailDigestResponse:
         """
@@ -257,7 +259,13 @@ class EmailAgent:
                     ranked.digest_id,
                 )
                 continue
-
+            content_info = content_meta.get(ranked.digest_id)
+            if content_info is None:
+                logger.warning(
+                    "EmailAgent: no content meta found for digest_id=%r, skipping",
+                    ranked.digest_id,
+                )
+                continue
             details.append(
                 RankedArticleDetail(
                     digest_id=ranked.digest_id,
@@ -265,21 +273,19 @@ class EmailAgent:
                     relevance_score=ranked.relevance_score,
                     title=digest.title,
                     summary=digest.summary,
-                    url=url_map.get(ranked.digest_id, ""),
+                    url=content_info["url"],
+                    image_url=content_info["image_url"],
+                    reading_minutes=content_info["reading_minutes"],
                     article_type=digest.article_type,
                     reasoning=ranked.reasoning,
                 )
             )
-
-        introduction = self._generate_introduction(details)
-
         return EmailDigestResponse(
-            introduction=introduction,
+            introduction=self._generate_introduction(details),
             articles=details,
             total_ranked=len(ranked_scores),
             top_n=limit,
         )
-
     def build_response_from_orm(
         self,
         *,
@@ -327,13 +333,15 @@ class EmailAgent:
                     relevance_score=ranked.relevance_score,
                     title=orm_item.title,
                     summary=orm_item.summary or "",
-                    url=orm_item.url,
+                    url=meta.get("url", ""),
                     article_type=(
                         orm_item.source
                         if isinstance(orm_item, Article)
                         else "youtube"
                     ),
                     reasoning=ranked.reasoning,
+                    image_url=meta.get("image_url", None),
+                    reading_minutes=meta.get("reading_minutes", 1),
                 )
             )
 

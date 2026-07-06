@@ -2,5 +2,6 @@
 
 from app.database.repositories.article_repository import ArticleRepository
 from app.database.repositories.youtube_repository import YoutubeRepository
+from app.database.repositories.embedding_repository import EmbeddingRepository
 
-__all__ = ["ArticleRepository", "YoutubeRepository"]
+__all__ = ["ArticleRepository", "YoutubeRepository", "EmbeddingRepository"]

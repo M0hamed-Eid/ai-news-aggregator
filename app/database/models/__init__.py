@@ -10,5 +10,6 @@
 
 from app.database.models.article import Article
 from app.database.models.youtube_video import YoutubeVideo
+from app.database.models.embedding import Embedding
 
-__all__ = ["Article", "YoutubeVideo"]
+__all__ = ["Article", "YoutubeVideo", "Embedding"]
