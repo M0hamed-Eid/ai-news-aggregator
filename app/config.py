@@ -74,6 +74,24 @@ class ScraperConfig:
     ])
 
 
+
+@dataclass
+class ScraperConfig:
+    hours_lookback: int = 24
+    max_transcript_chars: int = 8_000
+
+    youtube_channels: List[dict] = field(default_factory=lambda: [
+        # ... unchanged ...
+    ])
+
+    # NEW — arXiv subject categories to poll for new papers.
+    # Full category list: https://arxiv.org/category_taxonomy
+    arxiv_categories: List[str] = field(default_factory=lambda: [
+        "cs.AI",   # Artificial Intelligence
+        "cs.CL",   # Computation and Language (NLP)
+        "cs.LG",   # Machine Learning
+    ])
+
 @dataclass
 class AppConfig:
     """

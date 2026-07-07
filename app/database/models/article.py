@@ -132,7 +132,7 @@ class Article(Base):
     __table_args__ = (
         # Enforce only known source values at the DB level.
         CheckConstraint(
-            "source IN ('blog_openai', 'blog_anthropic')",
+            "source IN ('blog_openai', 'blog_anthropic', 'arxiv')",
             name="ck_articles_source",
         ),
 

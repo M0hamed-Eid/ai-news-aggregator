@@ -207,6 +207,49 @@ def run_blogs_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
         result.articles_errors += 1
 
 
+def run_arxiv_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
+    from app.scrapers.arxiv_scraper import ArxivScraper
+    from app.database import get_db_session, ArticleRepository
+
+    logger.info("[arXiv] Starting scrape  (hours_lookback=%d)", hours)
+    try:
+        scraper = ArxivScraper()
+        items = scraper.scrape(hours_lookback=hours)
+    except Exception as exc:
+        logger.error("[arXiv] Scraper crashed: %s", exc, exc_info=True)
+        result.articles_errors += 1
+        return
+
+    result.articles_scraped += len(items)
+    logger.info("[arXiv] Scraped %d items", len(items))
+
+    valid_items = []
+    for item in items:
+        errors = _validate_scraped_article(item)
+        if errors:
+            logger.warning("[arXiv] Skipping invalid item %r: %s", item.title, errors)
+            result.articles_errors += 1
+        else:
+            valid_items.append(item)
+
+    if dry_run:
+        logger.info("[arXiv] DRY RUN — would insert %d items", len(valid_items))
+        return
+
+    if not valid_items:
+        logger.info("[arXiv] Nothing valid to insert")
+        return
+
+    try:
+        with get_db_session() as db:
+            repo = ArticleRepository(db)
+            inserted, skipped = repo.bulk_create(valid_items)
+            result.articles_inserted += inserted
+            result.articles_skipped += skipped
+    except Exception as exc:
+        logger.error("[arXiv] DB insertion failed: %s", exc, exc_info=True)
+        result.articles_errors += 1
+
 def run_embedding_phase(result: PipelineResult) -> None:
     """
     Embeds every article/video that doesn't have an embedding yet.
@@ -363,7 +406,7 @@ Examples:
     )
     parser.add_argument(
         "--source",
-        choices=["all", "youtube", "blogs"],
+        choices=["all", "youtube", "blogs", "arxiv"],
         default="all",
         help="Which scraper(s) to run (default: all)",
     )
@@ -423,6 +466,9 @@ Examples:
 
         if args.source in ("all", "blogs"):
             run_blogs_phase(args.hours, args.dry_run, result)
+
+        if args.source in ("all", "arxiv"):
+            run_arxiv_phase(args.hours, args.dry_run, result)
 
     # ── Step 3: embedding (Phase 1.5) ─────────────────────────────────────
     if not args.dry_run:
