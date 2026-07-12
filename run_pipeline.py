@@ -11,6 +11,12 @@
 #   python run_pipeline.py --hours 48             # override lookback window
 #   python run_pipeline.py --source youtube       # only YouTube scraper
 #   python run_pipeline.py --source blogs         # only blog scraper
+#   python run_pipeline.py --source arxiv         # only arXiv scraper
+#   python run_pipeline.py --source github        # only GitHub releases scraper
+#   python run_pipeline.py --source reddit        # only Reddit (r/MachineLearning etc.)
+#   python run_pipeline.py --source funding       # only funding/investment news
+#   python run_pipeline.py --source government    # only government/regulatory sources
+#   python run_pipeline.py --source huggingface   # only Hugging Face Hub new models
 #   python run_pipeline.py --skip-scraping        # skip Phase 1, use existing DB content
 #   python run_pipeline.py --skip-digest          # skip Phase 2+3
 #   python run_pipeline.py --skip-email           # run digest but print instead of sending
@@ -22,6 +28,15 @@
 #    content is already in the DB (saves significant time during dev/testing).
 # 2. Switched AI provider from OpenAI to Groq throughout.
 #    OPENAI_API_KEY is no longer required; GROQ_API_KEY is used instead.
+# 3. Extracted _run_article_phase() — the scrape/validate/bulk_create logic
+#    that used to be copy-pasted across run_blogs_phase/run_arxiv_phase/
+#    run_github_phase (and differed slightly between them: blogs used `=`
+#    instead of `+=` on result.articles_scraped/skipped, silently relying on
+#    running first — now fixed by consolidation). Every Article-based phase
+#    (everything except YouTube, which owns its own table/repository) now
+#    calls this one helper. Added reddit/funding/government phases the same
+#    way. SOURCE_PHASES below drives both --source's choices and dispatch —
+#    adding a future source is one new phase function + one line there.
 
 import argparse
 import logging
@@ -163,81 +178,48 @@ def run_youtube_phase(hours: int, dry_run: bool, result: PipelineResult) -> None
         result.youtube_errors += 1
 
 
-def run_blogs_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
-    from app.scrapers.blog_scraper import BlogScraper
+def _run_article_phase(
+    label: str,
+    scraper,
+    hours: int,
+    dry_run: bool,
+    result: PipelineResult,
+) -> None:
+    """
+    Shared scrape -> validate -> bulk_create runner for every Article-based
+    source (everything except YouTube, which owns its own repository/table).
+    `scraper` just needs a `.scrape(hours_lookback=...) -> List[ScrapedArticle]`
+    method — this is what every BaseScraper subclass provides, so any new
+    source's phase function is a one-line call into this helper.
+    """
     from app.database import get_db_session, ArticleRepository
 
-    logger.info("[Blogs] Starting scrape  (hours_lookback=%d)", hours)
+    logger.info("[%s] Starting scrape  (hours_lookback=%d)", label, hours)
     try:
-        scraper = BlogScraper()
-        items   = scraper.scrape(hours_lookback=hours)
-    except Exception as exc:
-        logger.error("[Blogs] Scraper crashed: %s", exc, exc_info=True)
-        result.articles_errors += 1
-        return
-
-    result.articles_scraped = len(items)
-    logger.info("[Blogs] Scraped %d items", len(items))
-
-    valid_items = []
-    for item in items:
-        errors = _validate_scraped_article(item)
-        if errors:
-            logger.warning("[Blogs] Skipping invalid item %r: %s", item.title, errors)
-            result.articles_errors += 1
-        else:
-            valid_items.append(item)
-
-    if dry_run:
-        logger.info("[Blogs] DRY RUN — would insert %d items", len(valid_items))
-        return
-
-    if not valid_items:
-        logger.info("[Blogs] Nothing valid to insert")
-        return
-
-    try:
-        with get_db_session() as db:
-            repo = ArticleRepository(db)
-            inserted, skipped = repo.bulk_create(valid_items)
-            result.articles_inserted = inserted
-            result.articles_skipped  = skipped
-    except Exception as exc:
-        logger.error("[Blogs] DB insertion failed: %s", exc, exc_info=True)
-        result.articles_errors += 1
-
-
-def run_arxiv_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
-    from app.scrapers.arxiv_scraper import ArxivScraper
-    from app.database import get_db_session, ArticleRepository
-
-    logger.info("[arXiv] Starting scrape  (hours_lookback=%d)", hours)
-    try:
-        scraper = ArxivScraper()
         items = scraper.scrape(hours_lookback=hours)
     except Exception as exc:
-        logger.error("[arXiv] Scraper crashed: %s", exc, exc_info=True)
+        logger.error("[%s] Scraper crashed: %s", label, exc, exc_info=True)
         result.articles_errors += 1
         return
 
     result.articles_scraped += len(items)
-    logger.info("[arXiv] Scraped %d items", len(items))
+    logger.info("[%s] Scraped %d items", label, len(items))
 
     valid_items = []
     for item in items:
         errors = _validate_scraped_article(item)
         if errors:
-            logger.warning("[arXiv] Skipping invalid item %r: %s", item.title, errors)
+            logger.warning("[%s] Skipping invalid item %r: %s", label, item.title, errors)
             result.articles_errors += 1
         else:
             valid_items.append(item)
 
     if dry_run:
-        logger.info("[arXiv] DRY RUN — would insert %d items", len(valid_items))
+        logger.info("[%s] DRY RUN — would insert %d items", label, len(valid_items))
         return
 
     if not valid_items:
-        logger.info("[arXiv] Nothing valid to insert")
+        logger.info("[%s] Nothing valid to insert", label)
         return
 
     try:
@@ -247,8 +229,79 @@ def run_arxiv_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
             result.articles_inserted += inserted
             result.articles_skipped += skipped
     except Exception as exc:
-        logger.error("[arXiv] DB insertion failed: %s", exc, exc_info=True)
+        logger.error("[%s] DB insertion failed: %s", label, exc, exc_info=True)
         result.articles_errors += 1
+
+
+def run_blogs_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
+    from app.scrapers.blog_scraper import BlogScraper
+    _run_article_phase("Blogs", BlogScraper(), hours, dry_run, result)
+
+
+def run_arxiv_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
+    from app.scrapers.arxiv_scraper import ArxivScraper
+    _run_article_phase("arXiv", ArxivScraper(), hours, dry_run, result)
+
+
+def run_github_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
+    from app.scrapers.github_release_scraper import GitHubReleaseScraper
+    _run_article_phase("GitHub", GitHubReleaseScraper(), hours, dry_run, result)
+
+
+def run_reddit_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
+    from app.scrapers.rss_feed_scraper import RssFeedScraper
+    from app.config import config
+    _run_article_phase(
+        "Reddit",
+        RssFeedScraper(source_name="reddit", feeds=config.scraper.reddit_feeds),
+        hours, dry_run, result,
+    )
+
+
+def run_funding_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
+    from app.scrapers.rss_feed_scraper import RssFeedScraper
+    from app.config import config
+    _run_article_phase(
+        "Funding",
+        RssFeedScraper(source_name="funding", feeds=config.scraper.funding_feeds),
+        hours, dry_run, result,
+    )
+
+
+def run_government_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
+    from app.scrapers.rss_feed_scraper import RssFeedScraper
+    from app.scrapers.federal_register_scraper import FederalRegisterScraper
+    from app.config import config
+    _run_article_phase(
+        "Government-RSS",
+        RssFeedScraper(source_name="government_rss", feeds=config.scraper.government_feeds),
+        hours, dry_run, result,
+    )
+    _run_article_phase("Government-US", FederalRegisterScraper(), hours, dry_run, result)
+
+
+def run_huggingface_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
+    from app.scrapers.huggingface_scraper import HuggingFaceScraper
+    _run_article_phase("HuggingFace", HuggingFaceScraper(), hours, dry_run, result)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Source registry — maps a --source name to its phase runner. --source's CLI
+# choices and main()'s dispatch loop both derive from this list, so adding a
+# new scraping source is one new run_<name>_phase() function + one line here.
+# ─────────────────────────────────────────────────────────────────────────────
+
+SOURCE_PHASES = [
+    ("youtube", run_youtube_phase),
+    ("blogs", run_blogs_phase),
+    ("arxiv", run_arxiv_phase),
+    ("github", run_github_phase),
+    ("reddit", run_reddit_phase),
+    ("funding", run_funding_phase),
+    ("government", run_government_phase),
+    ("huggingface", run_huggingface_phase),
+]
+
 
 def run_embedding_phase(result: PipelineResult) -> None:
     """
@@ -406,7 +459,7 @@ Examples:
     )
     parser.add_argument(
         "--source",
-        choices=["all", "youtube", "blogs", "arxiv"],
+        choices=["all"] + [name for name, _ in SOURCE_PHASES],
         default="all",
         help="Which scraper(s) to run (default: all)",
     )
@@ -461,14 +514,9 @@ Examples:
     if args.skip_scraping:
         logger.info("[Scraping] Skipped (--skip-scraping) — using existing DB content")
     else:
-        if args.source in ("all", "youtube"):
-            run_youtube_phase(args.hours, args.dry_run, result)
-
-        if args.source in ("all", "blogs"):
-            run_blogs_phase(args.hours, args.dry_run, result)
-
-        if args.source in ("all", "arxiv"):
-            run_arxiv_phase(args.hours, args.dry_run, result)
+        for name, phase_fn in SOURCE_PHASES:
+            if args.source in ("all", name):
+                phase_fn(args.hours, args.dry_run, result)
 
     # ── Step 3: embedding (Phase 1.5) ─────────────────────────────────────
     if not args.dry_run:

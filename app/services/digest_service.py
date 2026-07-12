@@ -69,7 +69,7 @@ from app.utils.youtube import youtube_thumbnail_url
 logger = logging.getLogger(__name__)
 
 # Raise this if you have a very large DB — set to None for no limit
-_SUMMARISE_BATCH_LIMIT = 200
+_SUMMARISE_BATCH_LIMIT = None
 
 
 # ---------------------------------------------------------------------------

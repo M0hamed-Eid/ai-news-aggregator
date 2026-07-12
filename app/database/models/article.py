@@ -25,8 +25,16 @@ class Article(Base):
     Represents a single blog post / news article from OpenAI or Anthropic.
 
     source values:
-        "blog_openai"     — from OpenAI's RSS feed
-        "blog_anthropic"  — scraped from anthropic.com/news via Playwright
+        "blog_openai"        — from OpenAI's RSS feed
+        "blog_anthropic"     — scraped from anthropic.com/news via Playwright
+        "arxiv"              — from arXiv's per-category RSS feeds
+        "github_release"     — from a tracked repo's GitHub releases Atom feed
+        "reddit"             — from tracked subreddits' RSS feeds
+        "government_us"      — US Federal Register (JSON API — their own RSS is bot-walled)
+        "government_uk"      — UK gov.uk search Atom feed
+        "government_nist"    — NIST News RSS feed
+        "funding_crunchbase" — Crunchbase News, AI section RSS feed
+        "huggingface_model"  — Hugging Face Hub, newest models (JSON API)
     """
 
     __tablename__ = "articles"
@@ -60,7 +68,7 @@ class Article(Base):
     source: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
-        comment="Scraper source identifier, e.g. blog_openai | blog_anthropic",
+        comment="Scraper source identifier — see the class docstring for the full list of valid values",
     )
 
     author: Mapped[str] = mapped_column(
@@ -132,7 +140,11 @@ class Article(Base):
     __table_args__ = (
         # Enforce only known source values at the DB level.
         CheckConstraint(
-            "source IN ('blog_openai', 'blog_anthropic', 'arxiv')",
+            "source IN ("
+            "'blog_openai', 'blog_anthropic', 'arxiv', 'github_release', "
+            "'reddit', 'government_us', 'government_uk', 'government_nist', "
+            "'funding_crunchbase', 'huggingface_model'"
+            ")",
             name="ck_articles_source",
         ),
 

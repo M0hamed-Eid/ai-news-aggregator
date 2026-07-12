@@ -106,14 +106,20 @@ class ArxivScraper(BaseScraper):
         return datetime(*time_struct[:6], tzinfo=timezone.utc)
     
     @staticmethod
-    def _truncate_authors(raw_authors: str, max_len: int = 197) -> str:
+    def _truncate_authors(raw_authors: str, max_len: int = 200) -> str:
         """
         Article.author is String(200) in the DB. arXiv papers can have 15+
         co-authors, easily exceeding that — truncate here so one long-author
         paper can't poison the whole bulk insert (ON CONFLICT DO NOTHING still
         fails the ENTIRE batch if any single row violates a column constraint).
         """
-        raw_authors = raw_authors.strip() or "arXiv"
+        raw_authors = (raw_authors or "").strip() or "arXiv"
         if len(raw_authors) <= max_len:
             return raw_authors
-        return raw_authors[:max_len].rsplit(",", 1)[0] + " et al."
+
+        suffix = " et al."
+        # Reserve space for the suffix BEFORE cutting, so cut + suffix
+        # never exceeds max_len. This was the bug in my previous version.
+        cut_at = max_len - len(suffix)
+        truncated = raw_authors[:cut_at].rsplit(",", 1)[0]
+        return truncated + suffix
