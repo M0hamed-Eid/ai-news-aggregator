@@ -14,8 +14,14 @@ class User(AbstractUser):
     swapped out painfully later.
     """
 
+    class Plan(models.TextChoices):
+        FREE = "free", "Free"
+        PRO = "pro", "Pro"
+
     username = None  # drop the username field entirely
     email = models.EmailField(_("email address"), unique=True)
+    plan = models.CharField(max_length=20, choices=Plan.choices, default=Plan.FREE)
+    plan_expires_at = models.DateTimeField(null=True, blank=True)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []  # createsuperuser prompts for email + password

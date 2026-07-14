@@ -55,7 +55,24 @@ def create_all_tables() -> None:
     # Step 4: report what was created
     table_names = list(Base.metadata.tables.keys())
     logger.info(f"Tables available: {table_names}")
-    logger.info("Done. Database is ready.")
+
+    # Step 5: mark this DB as Alembic-current. A brand-new DB created here has
+    # no alembic_version row; without this, a later `alembic upgrade head`
+    # would try to replay the baseline migration's CREATE TABLEs against
+    # tables that already exist and fail. Stamping (not upgrading) keeps a
+    # fresh DB and an existing hand-migrated DB on the identical Alembic state.
+    # This MUST be the last step: alembic/env.py calls logging.fileConfig(),
+    # which disables every logger configured above it (Python logging's
+    # default fileConfig behavior) — any logger.info() after this point would
+    # silently vanish, confirmed live. Use print() for the final line instead.
+    logger.info("Stamping Alembic head (schema changes go through migrations from here on)...")
+    from pathlib import Path
+    from alembic import command
+    from alembic.config import Config
+    alembic_cfg = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    command.stamp(alembic_cfg, "head")
+
+    print("Done. Database is ready (schema + Alembic state both current).")
 
 
 if __name__ == "__main__":

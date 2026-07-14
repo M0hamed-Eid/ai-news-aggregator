@@ -58,6 +58,32 @@ services:
       - backend
 
   # ---------------------------------------------------------------------------
+  # Redis — Celery broker + result backend (M6: background job queue).
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: ai_news_redis
+    restart: unless-stopped
+
+    command: redis-server --appendonly yes
+
+    ports:
+      - "6379:6379"
+
+    volumes:
+      - redis_data:/data
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+    networks:
+      - backend
+
+  # ---------------------------------------------------------------------------
   # pgAdmin 4 — optional web UI for browsing the DB during development.
   # Remove this service (or comment it out) before deploying to production.
   # ---------------------------------------------------------------------------
@@ -92,6 +118,8 @@ volumes:
   postgres_data:
     driver: local
   pgadmin_data:
+    driver: local
+  redis_data:
     driver: local
 
 # =============================================================================

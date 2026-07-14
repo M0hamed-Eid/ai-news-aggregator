@@ -6,3 +6,4 @@ __pycache__/
 .wolf/*
 !.wolf/OPENWOLF.md
 debug_last_email.html
+celerybeat-schedule*

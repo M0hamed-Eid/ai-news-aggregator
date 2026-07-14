@@ -10,13 +10,14 @@ class UserAdmin(BaseUserAdmin):
     """Admin tuned for the email-based custom user (no username field)."""
 
     ordering = ("email",)
-    list_display = ("email", "first_name", "last_name", "is_staff", "is_active")
-    list_filter = ("is_staff", "is_superuser", "is_active")
+    list_display = ("email", "first_name", "last_name", "plan", "is_staff", "is_active")
+    list_filter = ("is_staff", "is_superuser", "is_active", "plan")
     search_fields = ("email", "first_name", "last_name")
 
     fieldsets = (
         (None, {"fields": ("email", "password")}),
         (_("Personal info"), {"fields": ("first_name", "last_name")}),
+        (_("Plan"), {"fields": ("plan", "plan_expires_at")}),
         (
             _("Permissions"),
             {

@@ -118,6 +118,131 @@ Expected output:
 
 ---
 
+## Schema Migrations (Alembic)
+
+Schema changes go through Alembic migrations — never hand-written `ALTER TABLE`
+against a live DB. `python -m app.database.create_tables` (Phase 3 above)
+creates the tables AND stamps the DB at the current Alembic head in one step,
+so a brand-new dev DB and an existing one always converge on the same
+migration state.
+
+To make a schema change:
+
+```bash
+# 1. Edit/add a model in app/database/models/
+# 2. Generate a migration from the diff
+alembic revision --autogenerate -m "add some_column to articles"
+
+# 3. ALWAYS review the generated file in alembic/versions/ before applying —
+#    autogenerate is a starting point, not ground truth. In this project
+#    specifically, Django owns several tables in the SAME database (users,
+#    user_profiles, personas, ...); alembic/env.py's include_object filter
+#    excludes them from the diff, but any other unexpected op deserves a
+#    second look before it touches the real DB.
+
+# 4. Apply it
+alembic upgrade head
+
+# Useful commands
+alembic current      # what revision is this DB stamped at
+alembic history       # full migration chain
+```
+
+Known rough edge for a future migration: `pgvector.sqlalchemy.Vector` is a
+custom SQLAlchemy type, and autogenerate isn't guaranteed to emit a correct
+import for it in a migration that adds/alters a vector column — check the
+generated file's imports if you touch `embeddings.vector` later.
+
+---
+
+## Process Topology
+
+```
+                         ┌───────────────────────┐
+                         │   PostgreSQL (5433)   │
+                         │  pgvector extension   │
+                         └───────────┬───────────┘
+              writes/reads (own tables only)
+           ┌─────────────────────────┼─────────────────────────┐
+           │                                                    │
+┌──────────▼───────────┐                              ┌─────────▼──────────┐
+│  Pipeline (app/)      │                              │  Web (web/, Django) │
+│  SQLAlchemy           │◄──── read-only mirrors ─────►│  users/profiles/... │
+│  articles, sources,   │      (both directions)       │  personalized /feed  │
+│  embeddings, ...      │                              └──────────────────────┘
+└──────────┬────────────┘
+           │ enqueues via
+┌──────────▼────────────┐        ┌─────────────────┐
+│  Redis (6379)          │◄──────►│  Celery worker  │  --pool=solo (Windows)
+│  broker + result store │        │  app/tasks/*    │  runs scrape/embed/digest
+└──────────┬─────────────┘        └─────────────────┘
+           │ schedules
+┌──────────▼─────────────┐
+│  Celery beat            │  fires run_full_pipeline_task every 6h
+│  (app/celery_app.py)    │  (crontab, no DB-backed schedule)
+└──────────────────────────┘
+
+Manual/one-off runs still work standalone: `python run_pipeline.py [flags]`
+never touches Celery or Redis — it calls the same phase functions directly.
+```
+
+---
+
+## Background Jobs (Celery + Redis)
+
+The pipeline's scraping/embedding/digest phases run as Celery tasks
+(`app/tasks/`), with Redis as the broker and result backend. The manual CLI
+(`python run_pipeline.py`) is untouched and still works for one-off runs —
+Celery tasks call the exact same phase functions (`run_scraping_phases`,
+`run_embedding_phase`, `run_digest_phase`), never `run_pipeline.main()`.
+
+### Start Redis
+
+```bash
+docker compose -f docker/docker-compose.yml up -d redis
+```
+
+### Windows dev note — invocation matters
+
+Always use `python -m celery`, never the bare `celery` command, and always
+run from the repo root. `run_pipeline.py` is a top-level script (no package,
+no editable install) — only `python -m X` adds the current working directory
+to `sys.path`, which `app/tasks/pipeline_tasks.py` needs to `import
+run_pipeline`. The bare `celery` console-script entry point does not add CWD,
+so it can never resolve that import.
+
+Celery's default prefork pool has known issues on Windows — always pass
+`--pool=solo` for the worker.
+
+### Run the worker + beat (two separate processes)
+
+```bash
+# Terminal 1 — executes tasks
+python -m celery -A app.celery_app:celery_app worker --pool=solo --loglevel=info
+
+# Terminal 2 — fires the scheduled task every 6 hours (crontab, code-defined,
+# no django-celery-beat / no DB-backed schedule table)
+python -m celery -A app.celery_app:celery_app beat --loglevel=info
+```
+
+### Available tasks
+
+| Task | Purpose |
+|---|---|
+| `app.tasks.health_tasks.ping_task` | Trivial round-trip check |
+| `app.tasks.pipeline_tasks.scrape_task` | One source or "all" |
+| `app.tasks.pipeline_tasks.embed_task` | Embed unembedded content |
+| `app.tasks.pipeline_tasks.digest_task` | Rank + send digests |
+| `app.tasks.pipeline_tasks.run_full_pipeline_task` | scrape → embed → digest, what beat schedules |
+
+Dispatch one manually to confirm the round-trip works:
+
+```bash
+python -c "from app.tasks.health_tasks import ping_task; r = ping_task.delay('hi'); print(r.get(timeout=10))"
+```
+
+---
+
 ## Phase 4 — Run the Pipeline
 
 ```bash
@@ -261,8 +386,7 @@ and need no running Postgres.
 - [ ] Set `POSTGRES_HOST` to your RDS / Cloud SQL endpoint
 - [ ] Remove the `pgadmin` service from docker-compose.yml
 - [ ] Set `LOG_LEVEL=WARNING` in production `.env`
-- [ ] Schedule `run_pipeline.py` with cron or a task scheduler:
-      `0 */6 * * * cd /app && python run_pipeline.py >> /var/log/pipeline.log 2>&1`
-- [ ] Set up Alembic for schema migrations (when you add columns later):
-      `alembic init alembic && alembic revision --autogenerate -m "init"`
+- [ ] Run the pipeline via Celery beat instead of a raw cron entry (see
+      "Background Jobs" below) — cron/manual `run_pipeline.py` still works
+      as a fallback for one-off runs.
 - [ ] Add monitoring: alert if pipeline exits with code 1 (errors occurred)

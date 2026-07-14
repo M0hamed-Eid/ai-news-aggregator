@@ -20,6 +20,8 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool, QueuePool
 
+from app.database.db_url import build_database_url
+
 load_dotenv()  # read .env before anything else
 
 logger = logging.getLogger(__name__)
@@ -27,25 +29,11 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Build the DATABASE_URL
 # =============================================================================
-# Priority:
-#   1. DATABASE_URL env var (explicit, good for CI/CD pipelines)
-#   2. Individual POSTGRES_* vars (convenient for Docker / local dev)
+# Resolution logic lives in app/database/db_url.py — shared with alembic/env.py
+# so the app and the migration tool can never independently drift on which
+# database they point at.
 
-def _build_database_url() -> str:
-    url = os.getenv("DATABASE_URL")
-    if url:
-        return url
-
-    user     = os.getenv("POSTGRES_USER",     "ai_news_user")
-    password = os.getenv("POSTGRES_PASSWORD", "changeme_in_production")
-    host     = os.getenv("POSTGRES_HOST",     "localhost")
-    port     = os.getenv("POSTGRES_PORT",     "5432")
-    dbname   = os.getenv("POSTGRES_DB",       "ai_news")
-
-    return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{dbname}"
-
-
-DATABASE_URL = _build_database_url()
+DATABASE_URL = build_database_url()
 
 # =============================================================================
 # Engine configuration
