@@ -23,7 +23,6 @@ from typing import List, Optional
 
 import feedparser
 
-from app.config import config
 from app.scrapers.base_scraper import BaseScraper, ScrapedArticle
 
 logger = logging.getLogger(__name__)
@@ -36,9 +35,9 @@ _TAG_RE = re.compile(r"<[^>]+>")
 
 class GitHubReleaseScraper(BaseScraper):
 
-    def __init__(self):
+    def __init__(self, repos: List[str]):
         super().__init__(source_name="github_release")
-        self.repos = config.scraper.github_repos
+        self.repos = repos
 
     def scrape(self, hours_lookback: int) -> List[ScrapedArticle]:
         all_articles: List[ScrapedArticle] = []

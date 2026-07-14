@@ -20,7 +20,6 @@ from typing import List, Optional
 
 import requests
 
-from app.config import config
 from app.scrapers.base_scraper import BaseScraper, ScrapedArticle
 
 logger = logging.getLogger(__name__)
@@ -31,9 +30,9 @@ MAX_ABSTRACT_CHARS = 8000
 
 class FederalRegisterScraper(BaseScraper):
 
-    def __init__(self):
+    def __init__(self, terms: List[str]):
         super().__init__(source_name="government_us")
-        self.terms = config.scraper.federal_register_terms
+        self.terms = terms
 
     def scrape(self, hours_lookback: int) -> List[ScrapedArticle]:
         all_articles: List[ScrapedArticle] = []

@@ -46,7 +46,7 @@ def create_all_tables() -> None:
     # Step 2: import ALL models so they register themselves with Base.metadata.
     # If you add a new model file, add its import here.
     logger.info("Loading models...")
-    from app.database.models import Article, YoutubeVideo, Embedding  # noqa: F401
+    from app.database.models import Article, YoutubeVideo, Embedding, Source, UserRanking, DigestLog  # noqa: F401
 
     # Step 3: create tables
     logger.info("Creating tables (CREATE TABLE IF NOT EXISTS)...")

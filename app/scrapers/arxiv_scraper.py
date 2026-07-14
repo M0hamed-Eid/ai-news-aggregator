@@ -20,7 +20,6 @@ from typing import List, Optional
 
 import feedparser
 
-from app.config import config
 from app.scrapers.base_scraper import BaseScraper, ScrapedArticle
 
 logger = logging.getLogger(__name__)
@@ -34,9 +33,9 @@ _ARXIV_ID_SUFFIX_RE = re.compile(r"\s*\(arXiv:\S+\)\s*$")
 
 class ArxivScraper(BaseScraper):
 
-    def __init__(self):
+    def __init__(self, categories: List[str]):
         super().__init__(source_name="arxiv")
-        self.categories = config.scraper.arxiv_categories
+        self.categories = categories
 
     def scrape(self, hours_lookback: int) -> List[ScrapedArticle]:
         all_articles: List[ScrapedArticle] = []

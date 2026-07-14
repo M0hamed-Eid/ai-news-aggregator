@@ -1,10 +1,11 @@
 # app/scrapers/rss_feed_scraper.py
 #
 # Generic, configuration-driven RSS/Atom feed scraper. Adding a new pure-RSS
-# source should require ONLY a new entry in the relevant ScraperConfig feed
-# list (reddit_feeds / government_feeds / funding_feeds in app/config.py) —
-# no new Python code. Currently reused across Developer Communities (Reddit),
-# Government (UK gov.uk, NIST), and Funding (Crunchbase News).
+# source should require ONLY a new row in the Source Registry (`sources`
+# table — see app/database/models/source.py, seeded via
+# app/database/seed_sources.py) with adapter_type="rss" and a config["feeds"]
+# list — no new Python code. Currently reused across Developer Communities
+# (Reddit), Government (UK gov.uk, NIST), and Funding (Crunchbase News).
 #
 # The field-extraction logic below was validated against three structurally
 # different real feeds (arXiv RSS 2.0, GitHub Atom, WordPress RSS 2.0):

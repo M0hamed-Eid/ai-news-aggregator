@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Sources · AI Compass{% endblock %}
+{% block content %}
+<h1 class="h3 app-section-title mb-1"><i class="bi bi-collection text-primary"></i> Sources</h1>
+<p class="text-muted mb-4">Uncheck a category or source to exclude it from your feed and digest — changes apply on the next ranking run.</p>
+
+<form method="get" class="row g-2 mb-4">
+  <div class="col-md-6">
+    <input type="search" name="q" class="form-control" placeholder="Search sources…" value="{{ q }}">
+  </div>
+  <div class="col-md-4">
+    <select name="category" class="form-select" onchange="this.form.submit()">
+      <option value="">All categories</option>
+      {% for key, label in categories %}
+        <option value="{{ key }}" {% if key == category_filter %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <button type="submit" class="btn btn-outline-primary w-100"><i class="bi bi-search"></i></button>
+  </div>
+</form>
+
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="q" value="{{ q }}">
+  <input type="hidden" name="category_filter" value="{{ category_filter }}">
+  {% if q or category_filter %}
+    <div class="alert alert-light border small">
+      <i class="bi bi-funnel"></i> Showing sources filtered by your search above — saving only updates <em>these</em> sources' status, not the full catalog.
+    </div>
+  {% endif %}
+
+  <div class="app-card p-4 mb-4">
+    <h2 class="h6 text-uppercase text-muted mb-3">Categories</h2>
+    <div class="d-flex flex-wrap gap-2">
+      {% for key, label in categories %}
+        <label class="app-chip {% if key not in excluded_categories %}active{% endif %}">
+          <input type="checkbox" name="categories" value="{{ key }}" {% if key not in excluded_categories %}checked{% endif %}>
+          <i class="bi bi-check-lg chip-check"></i>{{ label }}
+        </label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="app-card p-4 mb-4">
+    <h2 class="h6 text-uppercase text-muted mb-3">Individual sources</h2>
+    {% if sources %}
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Name</th>
+              <th>Category</th>
+              <th>Type</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for source in sources %}
+              <tr>
+                <td>
+                  <input type="checkbox" class="form-check-input" name="sources" value="{{ source.key }}" {% if source.key not in excluded_sources %}checked{% endif %}>
+                </td>
+                <td>
+                  <div class="fw-semibold">{{ source.name }}</div>
+                </td>
+                <td><span class="badge badge-category">{{ source.category_label }}</span></td>
+                <td><span class="text-uppercase small text-muted">{{ source.adapter_type }}</span></td>
+                <td>
+                  {% if source.is_active %}
+                    <span class="badge text-bg-success-subtle text-success-emphasis"><i class="bi bi-check-circle"></i> Active</span>
+                  {% else %}
+                    <span class="badge text-bg-secondary">Inactive</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {% include "components/_empty_state.html" with icon="bi-search" title="No sources match" %}
+    {% endif %}
+  </div>
+
+  <button type="submit" class="btn btn-primary"><i class="bi bi-check2"></i> Save source preferences</button>
+</form>
+{% endblock %}

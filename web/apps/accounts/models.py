@@ -29,3 +29,34 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.email
+
+
+class UserProfile(models.Model):
+    """
+    Per-user personalization anchor.
+
+    One-to-one with User. Onboarding is SOFT/SKIPPABLE: a brand new user gets
+    this row (via the post_save signal in signals.py) with persona=None and
+    onboarding_completed=False, but nothing in the app gates access on it —
+    sensible defaults apply immediately and the user can complete onboarding
+    whenever (or never).
+    """
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
+    bio = models.TextField(blank=True, default="")
+    persona = models.ForeignKey(
+        "onboarding.Persona",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="profiles",
+    )
+    onboarding_completed = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "user_profiles"
+
+    def __str__(self):
+        return f"Profile({self.user.email})"

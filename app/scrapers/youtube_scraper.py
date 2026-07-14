@@ -14,8 +14,7 @@ from datetime import datetime, timezone
 from typing import List
  
 from app.scrapers.base_scraper import BaseScraper, ScrapedArticle
-from app.config import config
- 
+
 logger = logging.getLogger(__name__)
  
 # Random delay between transcript fetches — avoids YouTube rate limiting
@@ -31,10 +30,10 @@ class YouTubeScraper(BaseScraper):
  
     RSS_FEED_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
  
-    def __init__(self):
+    def __init__(self, channels: List[dict], max_transcript_chars: int):
         super().__init__(source_name="youtube")
-        self.channels = config.scraper.youtube_channels
-        self.max_transcript_chars = config.scraper.max_transcript_chars
+        self.channels = channels
+        self.max_transcript_chars = max_transcript_chars
  
         # Build the YouTubeTranscriptApi instance with proxy if configured.
         # The correct API (v1.2.x) is:

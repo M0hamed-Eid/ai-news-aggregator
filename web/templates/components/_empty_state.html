@@ -1,0 +1,15 @@
+{% comment %}
+Reusable empty state. Expects:
+  icon    — optional Bootstrap Icons class, default "bi-inbox"
+  title   — optional heading, default "Nothing here yet"
+  message — optional supporting text
+  cta_url / cta_label — optional call-to-action button
+{% endcomment %}
+<div class="app-empty-state">
+  <i class="bi {{ icon|default:'bi-inbox' }}"></i>
+  <h5 class="mb-2">{{ title|default:"Nothing here yet" }}</h5>
+  {% if message %}<p class="mb-3">{{ message }}</p>{% endif %}
+  {% if cta_url %}
+    <a href="{{ cta_url }}" class="btn btn-primary btn-sm">{{ cta_label|default:"Explore" }}</a>
+  {% endif %}
+</div>

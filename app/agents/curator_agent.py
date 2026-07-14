@@ -37,12 +37,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass
-from typing import List, Union
+from dataclasses import dataclass, field
+from typing import Dict, List, Union
 
 from pydantic import BaseModel, Field
 
-from app.config import UserProfile
 from app.database.models.article import Article
 from app.database.models.youtube_video import YoutubeVideo
 from app.llm.client_factory import get_llm_client_and_model
@@ -50,6 +49,52 @@ from app.llm.client_factory import get_llm_client_and_model
 logger = logging.getLogger(__name__)
 
 _RANKING_BATCH_SIZE = 15  # max items per LLM ranking call
+
+# ---------------------------------------------------------------------------
+# UserProfile — the ranking/personalization input CuratorAgent and EmailAgent
+# both expect.
+#
+# Relocated from app/config.py (2026-07-12, multi-user milestone): this used
+# to be ONE hardcoded global instance (config.user) representing "the person
+# this pipeline serves." Personalization is now per-user — app/services/
+# recipients.py builds one fresh UserProfile instance per active DB user
+# (sourced from Django's users/user_profiles/personas/interests/
+# user_interests/user_digest_settings tables via the read-only cross-ORM
+# mirror in app/database/models/django_readmodels.py), and DigestService
+# constructs a new CuratorAgent/EmailAgent per recipient using it. The class
+# itself is unchanged — it's still the same shape both agents were already
+# built around — only its role changed, from "the one global config value"
+# to "a per-call personalization input assembled fresh for each user."
+# ---------------------------------------------------------------------------
+
+@dataclass
+class UserProfile:
+    """
+    Represents the person receiving a digest. Agents use this to personalise
+    summaries and rankings. One instance is built per recipient at digest
+    time — see app/services/recipients.py — not a single shared global.
+    """
+    name: str = "Mohammed"
+    email: str = ""
+
+    interests: List[str] = field(default_factory=lambda: [
+        "large language models",
+        "AI agents",
+        "open source models",
+        "NLP",
+        "machine learning research",
+        "RAG and vector databases",
+    ])
+
+    # Used by CuratorAgent when building the system prompt
+    expertise_level: str = "advanced"  # beginner | intermediate | advanced
+
+    preferences: Dict[str, str] = field(default_factory=lambda: {
+        "content_depth": "technical",       # technical | overview
+        "preferred_sources": "all",         # all | youtube | blogs
+        "max_video_length": "any",          # any | short | medium
+    })
+
 
 # ---------------------------------------------------------------------------
 # View-model: flat representation fed to the LLM
@@ -157,13 +202,15 @@ def _strip_json_fences(text: str) -> str:
 
 class CuratorAgent:
     """
-    Ranks content by relevance to a user profile.
+    Ranks content by relevance to a user profile. One instance per recipient
+    — see app/services/recipients.py for how each user's UserProfile is built.
 
     Usage
     -----
-    from app.config import config
-    agent = CuratorAgent(config.user)
-    ranked = agent.rank_items(articles + videos)   # ORM objects
+    from app.services.recipients import get_active_recipients
+    for recipient in get_active_recipients(db):
+        agent = CuratorAgent(recipient.profile)
+        ranked = agent.rank_items(articles + videos)   # ORM objects
     """
 
     def __init__(self, user_profile: UserProfile) -> None:

@@ -1,0 +1,39 @@
+{% comment %}
+Reusable article card. Expects:
+  article   — a catalog.Article instance (required)
+  rank      — optional int, shows a rank badge (Feed page)
+  reasoning — optional str, "Recommended because..." (Feed page)
+  featured  — optional bool, gives the card a highlighted left border
+{% endcomment %}
+<div class="col">
+  <div class="app-card h-100 d-flex flex-column {% if featured %}app-card-featured{% endif %}">
+    <a href="{% url 'news:article_detail' article.pk %}" class="text-decoration-none">
+      <div class="card-img-wrap">
+        {% if article.image_url %}
+          <img src="{{ article.image_url }}" alt="" loading="lazy">
+        {% else %}
+          <i class="bi bi-file-text"></i>
+        {% endif %}
+      </div>
+    </a>
+    <div class="card-body d-flex flex-column">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        {% if rank %}<span class="rank-badge">{{ rank }}</span>{% endif %}
+        <span class="badge badge-source">{{ article.source_label }}</span>
+        <span class="card-meta ms-auto"><i class="bi bi-clock"></i> {{ article.published_at|timesince }} ago</span>
+      </div>
+      <a href="{% url 'news:article_detail' article.pk %}" class="card-title-link mb-2 stretched-link-title">
+        {{ article.title }}
+      </a>
+      {% if article.summary %}
+        <p class="card-meta flex-grow-1">{{ article.summary|truncatewords:28 }}</p>
+      {% endif %}
+      {% if reasoning %}
+        <p class="app-recommend-box small mb-2"><i class="bi bi-lightbulb me-1"></i>{{ reasoning|truncatewords:22 }}</p>
+      {% endif %}
+      <a href="{% url 'news:article_detail' article.pk %}" class="btn btn-outline-primary btn-sm mt-auto align-self-start">
+        Read more <i class="bi bi-arrow-right"></i>
+      </a>
+    </div>
+  </div>
+</div>

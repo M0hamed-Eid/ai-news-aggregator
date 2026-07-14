@@ -28,7 +28,6 @@ from typing import List, Optional
 
 import requests
 
-from app.config import config
 from app.scrapers.base_scraper import BaseScraper, ScrapedArticle
 
 logger = logging.getLogger(__name__)
@@ -38,9 +37,9 @@ HUGGINGFACE_MODELS_API_URL = "https://huggingface.co/api/models"
 
 class HuggingFaceScraper(BaseScraper):
 
-    def __init__(self):
+    def __init__(self, fetch_limit: int):
         super().__init__(source_name="huggingface_model")
-        self.fetch_limit = config.scraper.huggingface_fetch_limit
+        self.fetch_limit = fetch_limit
 
     def scrape(self, hours_lookback: int) -> List[ScrapedArticle]:
         try:

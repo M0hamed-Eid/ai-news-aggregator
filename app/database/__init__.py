@@ -5,14 +5,18 @@
 # which submodule something lives in.
 
 from app.database.session import get_db_session, check_database_connection
-from app.database.models  import Article, YoutubeVideo
-from app.database.repositories import ArticleRepository, YoutubeRepository
+from app.database.models  import Article, YoutubeVideo, Source, UserRanking
+from app.database.repositories import ArticleRepository, YoutubeRepository, SourceRepository, UserRankingRepository
 
 __all__ = [
     "get_db_session",
     "check_database_connection",
     "Article",
     "YoutubeVideo",
+    "Source",
+    "UserRanking",
     "ArticleRepository",
     "YoutubeRepository",
+    "SourceRepository",
+    "UserRankingRepository",
 ]

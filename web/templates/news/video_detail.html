@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ video.title }} · AI News{% endblock %}
+{% block title %}{{ video.title }} · AI Compass{% endblock %}
 {% block content %}
 
 <nav aria-label="breadcrumb" class="mb-3">
@@ -11,9 +11,10 @@
 
 <article class="bg-white rounded-3 shadow-sm p-4 p-md-5">
   <div class="ratio ratio-16x9 mb-4">
-    <iframe src="{{ video.embed_url }}" title="{{ video.title }}"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowfullscreen></iframe>
+    <a href="{{ video.watch_url }}" target="_blank" rel="noopener noreferrer" class="video-thumb-link" aria-label="Watch {{ video.title }} on YouTube">
+      <img src="{{ video.thumbnail_url }}" alt="" class="video-thumb-img" loading="lazy">
+      <span class="video-play-overlay"><i class="bi bi-play-circle-fill"></i></span>
+    </a>
   </div>
 
   <div class="mb-2">
@@ -32,9 +33,10 @@
     <div class="alert alert-light border"><strong>Summary.</strong> {{ video.summary }}</div>
   {% endif %}
 
-  {% if transcript %}
-    <h2 class="h5 mt-4">Transcript</h2>
-    <div class="article-body text-body-secondary">{{ transcript }}</div>
+  {% if reasoning %}
+    <div class="app-recommend-box mb-3">
+      <i class="bi bi-lightbulb-fill me-1"></i> <strong>Recommended for you</strong> — {{ reasoning }}
+    </div>
   {% endif %}
 
   <hr class="my-4">

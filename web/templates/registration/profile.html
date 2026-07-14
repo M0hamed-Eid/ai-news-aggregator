@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Your profile · AI Compass{% endblock %}
+{% block content %}
+<div class="row g-4">
+  <div class="col-lg-8">
+    <div class="app-card p-4 p-md-5">
+      <h1 class="h3 app-section-title mb-4"><i class="bi bi-person-circle text-primary"></i> Your profile</h1>
+      <form method="post">
+        {% csrf_token %}
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label" for="first_name">Name</label>
+            <input type="text" class="form-control" id="first_name" name="first_name" value="{{ user.first_name }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Email</label>
+            <input type="email" class="form-control" value="{{ user.email }}" disabled>
+            <div class="form-text">Your login email — contact support to change it.</div>
+          </div>
+          <div class="col-12">
+            <label class="form-label" for="bio">Bio</label>
+            <textarea class="form-control" id="bio" name="bio" rows="3" placeholder="Tell us a bit about yourself (optional)">{{ profile.bio }}</textarea>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="persona">Persona</label>
+            <select class="form-select" id="persona" name="persona">
+              <option value="">— None selected —</option>
+              {% for persona in personas %}
+                <option value="{{ persona.id }}" {% if profile.persona_id == persona.id %}selected{% endif %}>{{ persona.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="frequency">Digest frequency</label>
+            <select class="form-select" id="frequency" name="frequency">
+              <option value="daily" {% if digest_settings.frequency == "daily" %}selected{% endif %}>Daily</option>
+              <option value="weekly" {% if digest_settings.frequency == "weekly" %}selected{% endif %}>Weekly</option>
+            </select>
+          </div>
+          <div class="col-12 form-check ps-4">
+            <input class="form-check-input" type="checkbox" id="is_paused" name="is_paused" {% if digest_settings.is_paused %}checked{% endif %}>
+            <label class="form-check-label" for="is_paused">Pause my digest emails (I'll still see everything in My Feed)</label>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary mt-4"><i class="bi bi-check2"></i> Save changes</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="app-card p-4 mb-4">
+      <h2 class="h6 text-uppercase text-muted mb-3">At a glance</h2>
+      <div class="d-flex justify-content-between mb-2">
+        <span>Digests received</span><strong>{{ digests_received_count }}</strong>
+      </div>
+      <div class="d-flex justify-content-between mb-2">
+        <span>Interests followed</span><strong>{{ interests|length }}</strong>
+      </div>
+      <div class="d-flex justify-content-between">
+        <span>Onboarding</span>
+        <strong>{% if profile.onboarding_completed %}<span class="text-success">Complete</span>{% else %}<span class="text-muted">Skipped</span>{% endif %}</strong>
+      </div>
+    </div>
+
+    <div class="app-card p-4 mb-4">
+      <h2 class="h6 text-uppercase text-muted mb-3">Your interests</h2>
+      {% if interests %}
+        <div class="d-flex flex-wrap gap-2">
+          {% for ui in interests %}
+            <span class="badge badge-source">{{ ui.interest.name }}</span>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="text-muted small mb-0">No interests selected yet.</p>
+      {% endif %}
+      <a href="{% url 'onboarding:preferences' %}" class="btn btn-outline-primary btn-sm mt-3">Manage interests</a>
+    </div>
+
+    <div class="app-card p-4">
+      <h2 class="h6 text-uppercase text-muted mb-3">Favorite sources</h2>
+      {% if favorite_sources %}
+        <ul class="list-unstyled mb-0">
+          {% for source_key, count in favorite_sources %}
+            <li class="d-flex justify-content-between py-1 border-bottom">
+              <span>{{ source_key }}</span><span class="text-muted">{{ count }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="text-muted small mb-0">Based on your ranked feed — nothing yet.</p>
+      {% endif %}
+      <a href="{% url 'onboarding:sources' %}" class="btn btn-outline-primary btn-sm mt-3">Manage sources</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

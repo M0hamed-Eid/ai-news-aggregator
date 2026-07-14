@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Article, YoutubeVideo
+from .models import Article, DigestLog, Source, UserRanking, YoutubeVideo
 
 
 class ReadOnlyAdmin(admin.ModelAdmin):
@@ -32,3 +32,25 @@ class YoutubeVideoAdmin(ReadOnlyAdmin):
     search_fields = ("title", "channel_name", "tags")
     date_hierarchy = "published_at"
     ordering = ("-published_at",)
+
+
+@admin.register(Source)
+class SourceAdmin(ReadOnlyAdmin):
+    list_display = ("name", "key", "category", "adapter_type", "is_active", "last_success_at")
+    list_filter = ("category", "adapter_type", "is_active")
+    search_fields = ("name", "key")
+
+
+@admin.register(UserRanking)
+class UserRankingAdmin(ReadOnlyAdmin):
+    list_display = ("user", "content_type", "content_id", "rank", "relevance_score", "computed_at")
+    list_filter = ("content_type",)
+    search_fields = ("user__email",)
+    ordering = ("user", "rank")
+
+
+@admin.register(DigestLog)
+class DigestLogAdmin(ReadOnlyAdmin):
+    list_display = ("user", "sent_at")
+    search_fields = ("user__email",)
+    date_hierarchy = "sent_at"

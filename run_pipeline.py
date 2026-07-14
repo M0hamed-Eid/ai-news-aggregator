@@ -2,25 +2,29 @@
 #
 # Main entry point for the full data pipeline.
 #
-# Phase 1 — scrape YouTube + blogs → insert into PostgreSQL
+# Phase 1 — scrape YouTube + blogs + Source-Registry-driven sources → insert into PostgreSQL
 # Phase 2 — generate AI summaries (DigestAgent) for unsummarised records
 # Phase 3 — rank content (CuratorAgent) + build + send email (EmailAgent)
 #
 # Usage:
 #   python run_pipeline.py
-#   python run_pipeline.py --hours 48             # override lookback window
-#   python run_pipeline.py --source youtube       # only YouTube scraper
-#   python run_pipeline.py --source blogs         # only blog scraper
-#   python run_pipeline.py --source arxiv         # only arXiv scraper
-#   python run_pipeline.py --source github        # only GitHub releases scraper
-#   python run_pipeline.py --source reddit        # only Reddit (r/MachineLearning etc.)
-#   python run_pipeline.py --source funding       # only funding/investment news
-#   python run_pipeline.py --source government    # only government/regulatory sources
-#   python run_pipeline.py --source huggingface   # only Hugging Face Hub new models
-#   python run_pipeline.py --skip-scraping        # skip Phase 1, use existing DB content
-#   python run_pipeline.py --skip-digest          # skip Phase 2+3
-#   python run_pipeline.py --skip-email           # run digest but print instead of sending
-#   python run_pipeline.py --dry-run              # scrape but do NOT write to DB
+#   python run_pipeline.py --hours 48              # override lookback window
+#   python run_pipeline.py --source blogs          # only blog scraper (hardcoded/legacy, not in the registry)
+#   python run_pipeline.py --source youtube        # only YouTube scraper
+#   python run_pipeline.py --source arxiv          # only arXiv scraper
+#   python run_pipeline.py --source reddit         # only Reddit (r/MachineLearning etc.)
+#   python run_pipeline.py --source government_uk  # only UK government RSS
+#   python run_pipeline.py --source <key>          # --source now accepts ANY active key from the
+#                                                   # Source Registry `sources` table (see
+#                                                   # app/database/models/source.py) — it is no longer
+#                                                   # a fixed argparse choices list. Run with an invalid
+#                                                   # value to see the current valid keys printed back.
+#                                                   # "blogs" and "youtube" remain special-cased CLI
+#                                                   # values (see run_blogs_phase/run_youtube_phase below).
+#   python run_pipeline.py --skip-scraping         # skip Phase 1, use existing DB content
+#   python run_pipeline.py --skip-digest           # skip Phase 2+3
+#   python run_pipeline.py --skip-email            # run digest but print instead of sending
+#   python run_pipeline.py --dry-run               # scrape but do NOT write to DB
 #
 # Changes from previous version
 # ----------------------------------
@@ -29,21 +33,34 @@
 # 2. Switched AI provider from OpenAI to Groq throughout.
 #    OPENAI_API_KEY is no longer required; GROQ_API_KEY is used instead.
 # 3. Extracted _run_article_phase() — the scrape/validate/bulk_create logic
-#    that used to be copy-pasted across run_blogs_phase/run_arxiv_phase/
-#    run_github_phase (and differed slightly between them: blogs used `=`
-#    instead of `+=` on result.articles_scraped/skipped, silently relying on
-#    running first — now fixed by consolidation). Every Article-based phase
-#    (everything except YouTube, which owns its own table/repository) now
-#    calls this one helper. Added reddit/funding/government phases the same
-#    way. SOURCE_PHASES below drives both --source's choices and dispatch —
-#    adding a future source is one new phase function + one line there.
+#    shared by every Article-based phase (and, via repo_cls, YouTube too).
+# 4. Per-source config (which subreddits, which arXiv categories, etc.) now
+#    lives in the DB-driven Source Registry (`sources` table — see
+#    app/database/models/source.py, backfilled by app/database/seed_sources.py)
+#    instead of the old hardcoded ScraperConfig fields. SOURCE_PHASES and the
+#    individual run_<name>_phase() functions for arxiv/github/reddit/funding/
+#    government/huggingface are GONE, replaced by HANDLER_BUILDERS +
+#    run_scraping_phases() below, which queries SourceRepository and
+#    builds/dispatches a scraper instance from each row's .config. Adding a
+#    future non-RSS API source is now a DB row + one HANDLER_BUILDERS entry;
+#    adding a pure-RSS source is a DB row only — neither needs new code here.
+#    run_blogs_phase (BlogScraper, hardcoded/legacy, deliberately NOT in the
+#    registry) and run_youtube_phase (still its own repository/table) remain
+#    their own functions and special-cased CLI values ("blogs", "youtube").
+# 5. BEHAVIOR CHANGE: because --source's valid values now come from the DB
+#    (the `sources` table) rather than a hardcoded argparse `choices=[...]`
+#    list, validating an unrecognized --source value requires ONE database
+#    query — even when --dry-run is set (previously --dry-run never touched
+#    the DB at all). This is deliberate and disclosed here, not an accidental
+#    regression: source config itself now lives in the DB, so there is no
+#    longer a DB-free way to know the valid keys.
 
 import argparse
 import logging
 import sys
 import os
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Tuple
 
 from dotenv import load_dotenv
 
@@ -56,6 +73,18 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+# ── Scraper classes needed to build HANDLER_BUILDERS below. These are now
+# imported eagerly (rather than lazily inside each phase function, as before
+# per-source config was DB-driven) because HANDLER_BUILDERS is a module-level
+# dict of factories any registry row can invoke by its `handler` string at
+# dispatch time. ───────────────────────────────────────────────────────────
+from app.scrapers.arxiv_scraper import ArxivScraper
+from app.scrapers.github_release_scraper import GitHubReleaseScraper
+from app.scrapers.youtube_scraper import YouTubeScraper
+from app.scrapers.federal_register_scraper import FederalRegisterScraper
+from app.scrapers.huggingface_scraper import HuggingFaceScraper
+from app.scrapers.rss_feed_scraper import RssFeedScraper
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,75 +163,55 @@ def _validate_scraped_article(item) -> List[str]:
 # Phase 1 runners — scraping
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_youtube_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
-    from app.scrapers.youtube_scraper import YouTubeScraper
-    from app.database import get_db_session, YoutubeRepository
-
-    logger.info("[YouTube] Starting scrape  (hours_lookback=%d)", hours)
-    try:
-        scraper = YouTubeScraper()
-        items   = scraper.scrape(hours_lookback=hours)
-    except Exception as exc:
-        logger.error("[YouTube] Scraper crashed: %s", exc, exc_info=True)
-        result.youtube_errors += 1
-        return
-
-    result.youtube_scraped = len(items)
-    logger.info("[YouTube] Scraped %d items", len(items))
-
-    valid_items = []
-    for item in items:
-        errors = _validate_scraped_article(item)
-        if errors:
-            logger.warning("[YouTube] Skipping invalid item %r: %s", item.title, errors)
-            result.youtube_errors += 1
-        else:
-            valid_items.append(item)
-
-    if dry_run:
-        logger.info("[YouTube] DRY RUN — would insert %d items", len(valid_items))
-        return
-
-    if not valid_items:
-        logger.info("[YouTube] Nothing valid to insert")
-        return
-
-    try:
-        with get_db_session() as db:
-            repo = YoutubeRepository(db)
-            inserted, skipped = repo.bulk_create(valid_items)
-            result.youtube_inserted = inserted
-            result.youtube_skipped  = skipped
-    except Exception as exc:
-        logger.error("[YouTube] DB insertion failed: %s", exc, exc_info=True)
-        result.youtube_errors += 1
-
-
 def _run_article_phase(
     label: str,
     scraper,
     hours: int,
     dry_run: bool,
     result: PipelineResult,
-) -> None:
+    repo_cls=None,
+) -> bool:
     """
     Shared scrape -> validate -> bulk_create runner for every Article-based
-    source (everything except YouTube, which owns its own repository/table).
-    `scraper` just needs a `.scrape(hours_lookback=...) -> List[ScrapedArticle]`
-    method — this is what every BaseScraper subclass provides, so any new
-    source's phase function is a one-line call into this helper.
+    source, AND (via repo_cls=YoutubeRepository) for YouTube, which owns its
+    own table/repository but otherwise follows the identical shape. `scraper`
+    just needs a `.scrape(hours_lookback=...) -> List[ScrapedArticle]` method
+    — this is what every BaseScraper subclass provides.
+
+    repo_cls defaults to ArticleRepository. Passing YoutubeRepository lets
+    run_youtube_phase() reuse this same flow instead of its old bespoke body
+    (eliminating duplicate scrape/validate/insert logic between YouTube and
+    the Article-based phases). Which PipelineResult counters get incremented
+    (youtube_* vs articles_*) is chosen based on repo_cls, so the field names
+    and log format ("[YouTube] Scraped %d items", etc.) are unchanged.
+
+    Returns True unless the scraper crashed or the DB insertion failed — used
+    by the Source Registry dispatch (run_scraping_phases) to call
+    SourceRepository.mark_run() with an accurate success flag. Per-item
+    validation failures are NOT treated as a phase failure — they're
+    expected, routine noise-filtering, not a sign the source itself is broken.
     """
-    from app.database import get_db_session, ArticleRepository
+    from app.database import get_db_session, ArticleRepository, YoutubeRepository
+
+    if repo_cls is None:
+        repo_cls = ArticleRepository
+    is_youtube = repo_cls is YoutubeRepository
 
     logger.info("[%s] Starting scrape  (hours_lookback=%d)", label, hours)
     try:
         items = scraper.scrape(hours_lookback=hours)
     except Exception as exc:
         logger.error("[%s] Scraper crashed: %s", label, exc, exc_info=True)
-        result.articles_errors += 1
-        return
+        if is_youtube:
+            result.youtube_errors += 1
+        else:
+            result.articles_errors += 1
+        return False
 
-    result.articles_scraped += len(items)
+    if is_youtube:
+        result.youtube_scraped += len(items)
+    else:
+        result.articles_scraped += len(items)
     logger.info("[%s] Scraped %d items", label, len(items))
 
     valid_items = []
@@ -210,97 +219,194 @@ def _run_article_phase(
         errors = _validate_scraped_article(item)
         if errors:
             logger.warning("[%s] Skipping invalid item %r: %s", label, item.title, errors)
-            result.articles_errors += 1
+            if is_youtube:
+                result.youtube_errors += 1
+            else:
+                result.articles_errors += 1
         else:
             valid_items.append(item)
 
     if dry_run:
         logger.info("[%s] DRY RUN — would insert %d items", label, len(valid_items))
-        return
+        return True
 
     if not valid_items:
         logger.info("[%s] Nothing valid to insert", label)
-        return
+        return True
 
     try:
         with get_db_session() as db:
-            repo = ArticleRepository(db)
+            repo = repo_cls(db)
             inserted, skipped = repo.bulk_create(valid_items)
-            result.articles_inserted += inserted
-            result.articles_skipped += skipped
+            if is_youtube:
+                result.youtube_inserted += inserted
+                result.youtube_skipped  += skipped
+            else:
+                result.articles_inserted += inserted
+                result.articles_skipped  += skipped
     except Exception as exc:
         logger.error("[%s] DB insertion failed: %s", label, exc, exc_info=True)
-        result.articles_errors += 1
+        if is_youtube:
+            result.youtube_errors += 1
+        else:
+            result.articles_errors += 1
+        return False
+
+    return True
 
 
 def run_blogs_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
+    """BlogScraper stays hardcoded/legacy — deliberately NOT part of the Source Registry this milestone."""
     from app.scrapers.blog_scraper import BlogScraper
     _run_article_phase("Blogs", BlogScraper(), hours, dry_run, result)
 
 
-def run_arxiv_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
-    from app.scrapers.arxiv_scraper import ArxivScraper
-    _run_article_phase("arXiv", ArxivScraper(), hours, dry_run, result)
+def run_youtube_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
+    """
+    YouTube's config (channels, max_transcript_chars) now comes from its own
+    Source Registry row (key="youtube") instead of ScraperConfig, but it
+    still writes to its own table via YoutubeRepository — so it keeps its own
+    runner function (special-cased in run_scraping_phases(), like "blogs")
+    instead of going through the generic non-RSS registry loop there.
+    """
+    from app.database import get_db_session
+    from app.database.repositories.source_repository import SourceRepository
+    from app.database.repositories.youtube_repository import YoutubeRepository
 
+    with get_db_session() as db:
+        source = SourceRepository(db).get_by_key("youtube")
 
-def run_github_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
-    from app.scrapers.github_release_scraper import GitHubReleaseScraper
-    _run_article_phase("GitHub", GitHubReleaseScraper(), hours, dry_run, result)
+    if source is None or not source.is_active:
+        logger.error(
+            "[YouTube] No active 'youtube' row in the Source Registry — "
+            "run `python -m app.database.seed_sources` to backfill it."
+        )
+        result.youtube_errors += 1
+        return
 
-
-def run_reddit_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
-    from app.scrapers.rss_feed_scraper import RssFeedScraper
-    from app.config import config
-    _run_article_phase(
-        "Reddit",
-        RssFeedScraper(source_name="reddit", feeds=config.scraper.reddit_feeds),
-        hours, dry_run, result,
+    scraper = HANDLER_BUILDERS["youtube"](source.config)
+    success = _run_article_phase(
+        "YouTube", scraper, hours, dry_run, result, repo_cls=YoutubeRepository,
     )
 
-
-def run_funding_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
-    from app.scrapers.rss_feed_scraper import RssFeedScraper
-    from app.config import config
-    _run_article_phase(
-        "Funding",
-        RssFeedScraper(source_name="funding", feeds=config.scraper.funding_feeds),
-        hours, dry_run, result,
-    )
-
-
-def run_government_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
-    from app.scrapers.rss_feed_scraper import RssFeedScraper
-    from app.scrapers.federal_register_scraper import FederalRegisterScraper
-    from app.config import config
-    _run_article_phase(
-        "Government-RSS",
-        RssFeedScraper(source_name="government_rss", feeds=config.scraper.government_feeds),
-        hours, dry_run, result,
-    )
-    _run_article_phase("Government-US", FederalRegisterScraper(), hours, dry_run, result)
-
-
-def run_huggingface_phase(hours: int, dry_run: bool, result: PipelineResult) -> None:
-    from app.scrapers.huggingface_scraper import HuggingFaceScraper
-    _run_article_phase("HuggingFace", HuggingFaceScraper(), hours, dry_run, result)
+    if not dry_run:
+        with get_db_session() as db:
+            SourceRepository(db).mark_run(source.id, success=success)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Source registry — maps a --source name to its phase runner. --source's CLI
-# choices and main()'s dispatch loop both derive from this list, so adding a
-# new scraping source is one new run_<name>_phase() function + one line here.
+# Source Registry dispatch — replaces the old SOURCE_PHASES list + the
+# individual run_<name>_phase() functions for arxiv/github/reddit/funding/
+# government/huggingface. Adding a future non-RSS API source is now a DB row
+# (see app/database/seed_sources.py) + one HANDLER_BUILDERS entry below, not a
+# new run_<name>_phase() function. Adding a future pure-RSS source is a DB
+# row only — no code change at all.
 # ─────────────────────────────────────────────────────────────────────────────
 
-SOURCE_PHASES = [
-    ("youtube", run_youtube_phase),
-    ("blogs", run_blogs_phase),
-    ("arxiv", run_arxiv_phase),
-    ("github", run_github_phase),
-    ("reddit", run_reddit_phase),
-    ("funding", run_funding_phase),
-    ("government", run_government_phase),
-    ("huggingface", run_huggingface_phase),
-]
+HANDLER_BUILDERS = {
+    "arxiv": lambda cfg: ArxivScraper(categories=cfg["categories"]),
+    "github_release": lambda cfg: GitHubReleaseScraper(repos=cfg["repos"]),
+    "youtube": lambda cfg: YouTubeScraper(
+        channels=cfg["channels"], max_transcript_chars=cfg.get("max_transcript_chars", 8000)
+    ),
+    "federal_register": lambda cfg: FederalRegisterScraper(terms=cfg["terms"]),
+    "huggingface": lambda cfg: HuggingFaceScraper(fetch_limit=cfg.get("fetch_limit", 100)),
+}
+
+
+def _validate_source_handlers(sources) -> None:
+    """
+    Fail fast and loud (a RuntimeError, not a silent log) if any active,
+    non-RSS Source row references a handler HANDLER_BUILDERS doesn't
+    recognize — a misconfigured registry row should crash the run naming
+    exactly which source key is broken, not silently scrape nothing for it.
+    """
+    for source in sources:
+        if source.adapter_type != "rss" and source.handler not in HANDLER_BUILDERS:
+            raise RuntimeError(
+                f"Source registry misconfiguration: source key={source.key!r} "
+                f"(adapter_type={source.adapter_type!r}) has handler={source.handler!r}, "
+                f"which is not a recognized handler. Known handlers: {sorted(HANDLER_BUILDERS)}"
+            )
+
+
+def run_scraping_phases(
+    source_filter: str, hours: int, dry_run: bool, result: PipelineResult
+) -> None:
+    """
+    Dispatch every scraping phase for this run.
+
+    "blogs" and "youtube" are special-cased CLI values, resolved by their own
+    runner functions above (blogs isn't in the registry at all; youtube is,
+    but keeps its own repository/table). Every other active Source Registry
+    row is grouped by adapter_type:
+      - adapter_type="rss" rows are FLATTENED together into ONE RssFeedScraper
+        call (their `feeds` lists combined into one list) — this preserves
+        Reddit's per-feed delay_after_seconds pacing, which depends on
+        sequential iteration WITHIN a single RssFeedScraper.scrape() call.
+        Instantiating one RssFeedScraper per row would break that rate-limit
+        pacing (each instance would race the others instead of pacing itself).
+      - every other row gets its own scraper instance via
+        HANDLER_BUILDERS[row.handler](row.config) and its own
+        _run_article_phase(row.name, scraper, hours, dry_run, result) call.
+
+    After a non-dry-run attempt, SourceRepository.mark_run() is called for
+    every row that was attempted this run (both RSS-grouped rows and
+    individual API rows).
+    """
+    from app.database import get_db_session
+    from app.database.repositories.source_repository import SourceRepository
+
+    if source_filter in ("all", "blogs"):
+        run_blogs_phase(hours, dry_run, result)
+    if source_filter in ("all", "youtube"):
+        run_youtube_phase(hours, dry_run, result)
+    if source_filter in ("blogs", "youtube"):
+        return
+
+    with get_db_session() as db:
+        source_repo = SourceRepository(db)
+
+        # Validate every active row (not just the ones about to run this
+        # invocation) so a misconfigured registry row is caught even on a
+        # narrow --source run, not only when that particular row is picked.
+        active = source_repo.get_active()
+        _validate_source_handlers(active)
+
+        if source_filter == "all":
+            # youtube is excluded here — already handled by run_youtube_phase() above.
+            sources = [s for s in active if s.key != "youtube"]
+        else:
+            sources = source_repo.get_active_by_keys([source_filter])
+
+        # Pull out plain data before the session closes — each phase call
+        # below opens its OWN get_db_session() for the actual insert, and ORM
+        # objects shouldn't be used past their session's lifetime.
+        rss_rows = [(s.id, s.config.get("feeds", [])) for s in sources if s.adapter_type == "rss"]
+        handler_rows = [
+            (s.id, s.name, s.handler, s.config) for s in sources if s.adapter_type != "rss"
+        ]
+
+    attempts: List[Tuple[int, bool]] = []
+
+    if rss_rows:
+        combined_feeds: List[dict] = []
+        for _, feeds in rss_rows:
+            combined_feeds.extend(feeds)
+        scraper = RssFeedScraper(source_name="rss_sources", feeds=combined_feeds)
+        success = _run_article_phase("RSS Sources", scraper, hours, dry_run, result)
+        attempts.extend((source_id, success) for source_id, _ in rss_rows)
+
+    for source_id, name, handler, cfg in handler_rows:
+        scraper = HANDLER_BUILDERS[handler](cfg)
+        success = _run_article_phase(name, scraper, hours, dry_run, result)
+        attempts.append((source_id, success))
+
+    if not dry_run and attempts:
+        with get_db_session() as db:
+            source_repo = SourceRepository(db)
+            for source_id, success in attempts:
+                source_repo.mark_run(source_id, success=success)
 
 
 def run_embedding_phase(result: PipelineResult) -> None:
@@ -356,6 +462,16 @@ def run_digest_phase(
     skip_email: bool,
     result: PipelineResult,
 ) -> None:
+    """
+    Multi-user (2026-07-12): DigestService now ranks + builds one digest per
+    active recipient (see app/services/digest_service.py, app/services/
+    recipients.py) instead of a single global digest_response. This function
+    loops digest_result.digest_responses and sends one email per recipient,
+    to that recipient's own address — not a single hardcoded RECIPIENT_EMAIL.
+    The debug_last_email.html dump (for an already-fixed bug, per this file's
+    own changelog) is removed rather than namespaced per recipient — it was
+    dead debug scaffolding, not something worth keeping in a per-user loop.
+    """
     from app.config import config
     from app.services.digest_service import DigestService
     from app.services.email_sender import EmailSender
@@ -376,47 +492,64 @@ def run_digest_phase(
     result.digest_total_ranked        = digest_result.total_ranked
     result.digest_errors              = digest_result.errors
 
-    if digest_result.digest_response is None:
-        logger.warning("[Digest] No digest generated (possibly no content in window).")
-        return
-
-    html_body = render_email_html(digest_result.digest_response)
-    text_body = digest_result.digest_response.to_markdown()
-
-    # TEMP DEBUG — remove once we find the bug
-    with open("debug_last_email.html", "w", encoding="utf-8") as f:
-        f.write(html_body)
-    logger.info("[Digest] Wrote debug_last_email.html")
-
-
-    if skip_email:
-        logger.info("[Digest] --skip-email set — printing digest to stdout:\n\n%s", html_body)
+    if not digest_result.digest_responses:
+        logger.warning("[Digest] No digest generated for any recipient (possibly no content in window).")
         return
 
     sender = EmailSender()
-    if not sender.is_configured:
-        logger.info(
-            "[Digest] Email credentials not configured — printing digest to stdout.\n\n%s",
-            html_body,
-        )
-        return
+    sender_configured = sender.is_configured
 
-    recipient = os.getenv("RECIPIENT_EMAIL") or os.getenv("GMAIL_ADDRESS", "")
-    sent = sender.send(
-        to_address=recipient,
-        subject=(
-            f"Your AI News Digest — "
-            f"{digest_result.digest_response.articles[0].title[:50]}"
-            if digest_result.digest_response.articles
-            else "Your AI News Digest — Top Stories"
-        ),
-        body_html=html_body,
-        body_text=text_body,
-    )
-    if sent:
-        logger.info("[Digest] Email delivered to %s", recipient)
-    else:
-        logger.warning("[Digest] Email delivery failed — check logs above.")
+    for recipient_digest in digest_result.digest_responses:
+        recipient = recipient_digest.recipient
+        response = recipient_digest.response
+        to_address = recipient.profile.email
+
+        html_body = render_email_html(response)
+        text_body = response.to_markdown()
+
+        if skip_email:
+            logger.info(
+                "[Digest] --skip-email set — printing digest for %s to stdout:\n\n%s",
+                to_address, html_body,
+            )
+            continue
+
+        if not sender_configured:
+            logger.info(
+                "[Digest] Email credentials not configured — printing digest for %s to stdout.\n\n%s",
+                to_address, html_body,
+            )
+            continue
+
+        if not to_address:
+            logger.warning("[Digest] Recipient has no email address — skipping send.")
+            continue
+
+        sent = sender.send(
+            to_address=to_address,
+            subject=(
+                f"Your AI News Digest — {response.articles[0].title[:50]}"
+                if response.articles
+                else "Your AI News Digest — Top Stories"
+            ),
+            body_html=html_body,
+            body_text=text_body,
+        )
+        if sent:
+            logger.info("[Digest] Email delivered to %s", to_address)
+            # Log the send on OUR side (pipeline-owned digest_log table) so
+            # the profile page can show "digests received: N" without the
+            # pipeline ever writing into a Django-owned table.
+            if recipient.user_id is not None:
+                try:
+                    from app.database import get_db_session
+                    from app.database.repositories.digest_log_repository import DigestLogRepository
+                    with get_db_session() as db:
+                        DigestLogRepository(db).log_sent(recipient.user_id)
+                except Exception as exc:
+                    logger.error("[Digest] Failed to log digest send for user_id=%s — %s", recipient.user_id, exc)
+        else:
+            logger.warning("[Digest] Email delivery failed for %s — check logs above.", to_address)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -444,6 +577,9 @@ Examples:
   # Scrape only YouTube, skip digest
   python run_pipeline.py --source youtube --skip-digest
 
+  # Scrape only one Source Registry key (any active key, e.g. reddit/arxiv/government_uk)
+  python run_pipeline.py --source reddit --skip-digest
+
   # Scrape but do not write to DB (dry run)
   python run_pipeline.py --dry-run
 
@@ -459,9 +595,16 @@ Examples:
     )
     parser.add_argument(
         "--source",
-        choices=["all"] + [name for name, _ in SOURCE_PHASES],
+        type=str,
         default="all",
-        help="Which scraper(s) to run (default: all)",
+        help=(
+            "Which scraper(s) to run (default: all). Accepts 'all', 'blogs', "
+            "'youtube', or any active key from the Source Registry `sources` "
+            "table (e.g. 'arxiv', 'github_release', 'reddit', 'government_us', "
+            "'government_uk', 'government_nist', 'funding_crunchbase', "
+            "'huggingface_model') — this is no longer a fixed choices list; "
+            "run with an invalid value to see the current valid keys."
+        ),
     )
     parser.add_argument(
         "--skip-scraping",
@@ -483,8 +626,30 @@ Examples:
         action="store_true",
         help="Run digest generation but print the result instead of sending email",
     )
-    
+
     args = parser.parse_args()
+
+    # ── --source validation ────────────────────────────────────────────────
+    # --source's valid values now come from the DB (Source Registry `sources`
+    # table) rather than a hardcoded argparse `choices=[...]` list, so
+    # validating an unrecognized value requires ONE query here — even in
+    # --dry-run mode, which previously never touched the DB at all. Deliberate,
+    # disclosed behavior change (see the module docstring at the top of this file).
+    if args.source not in ("all", "blogs"):
+        from app.database import get_db_session
+        from app.database.repositories.source_repository import SourceRepository
+
+        with get_db_session() as db:
+            valid_keys = sorted(s.key for s in SourceRepository(db).get_active())
+
+        if args.source not in valid_keys:
+            print(
+                f"Error: unknown --source {args.source!r}.\n"
+                f"Valid values: 'all', 'blogs', "
+                f"{', '.join(repr(k) for k in valid_keys)}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     logger.info("=" * 60)
     logger.info("AI NEWS AGGREGATOR — PIPELINE START")
@@ -514,9 +679,7 @@ Examples:
     if args.skip_scraping:
         logger.info("[Scraping] Skipped (--skip-scraping) — using existing DB content")
     else:
-        for name, phase_fn in SOURCE_PHASES:
-            if args.source in ("all", name):
-                phase_fn(args.hours, args.dry_run, result)
+        run_scraping_phases(args.source, args.hours, args.dry_run, result)
 
     # ── Step 3: embedding (Phase 1.5) ─────────────────────────────────────
     if not args.dry_run:

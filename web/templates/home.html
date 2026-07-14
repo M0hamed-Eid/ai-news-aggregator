@@ -1,20 +1,80 @@
 {% extends "base.html" %}
-{% block title %}Home · AI News Intelligence{% endblock %}
+{% load query_transform %}
+{% block title %}Home · AI Compass{% endblock %}
 {% block content %}
-<div class="p-5 mb-4 bg-white rounded-3 shadow-sm">
-  <div class="container-fluid py-3">
-    <h1 class="display-6 fw-bold">AI News Intelligence Platform</h1>
-    {% if user.is_authenticated %}
-      <p class="col-md-8 fs-5">
-        You are signed in as <strong>{{ user.email }}</strong>.
-        Browse the latest AI news now; your personalized dashboard arrives in the next milestones.
-      </p>
-      <a class="btn btn-primary btn-lg" href="{% url 'news:article_list' %}">Browse news</a>
+
+<div class="app-hero p-4 p-md-5 mb-4">
+  <h1 class="display-6 fw-bold mb-2">What's happening in AI right now</h1>
+  <p class="fs-6 mb-3 opacity-90">The latest AI news, research, and releases — collected across {{ sources|length }} sources, updated continuously.</p>
+  {% if not user.is_authenticated %}
+    <a class="btn btn-light btn-lg me-2" href="{% url 'accounts:register' %}">Get your personalized feed <i class="bi bi-arrow-right"></i></a>
+    <a class="btn btn-outline-light btn-lg" href="{% url 'accounts:login' %}">Log in</a>
+  {% else %}
+    <a class="btn btn-light btn-lg" href="{% url 'feed' %}">Go to My Feed <i class="bi bi-stars"></i></a>
+  {% endif %}
+</div>
+
+{% if featured %}
+<h2 class="h5 app-section-title mb-3"><i class="bi bi-fire text-primary"></i> Featured</h2>
+<div class="row row-cols-1 row-cols-md-3 g-4 mb-5">
+  {% for item in featured %}
+    {% if item.video_id %}
+      {% include "components/_video_card.html" with video=item only %}
     {% else %}
-      <p class="col-md-8 fs-5">Personalized AI news, summaries, and research — in one place.</p>
-      <a class="btn btn-primary btn-lg me-2" href="{% url 'register' %}">Get started</a>
-      <a class="btn btn-outline-secondary btn-lg" href="{% url 'login' %}">Log in</a>
+      {% include "components/_article_card.html" with article=item featured=True only %}
+    {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-3">
+  <h2 class="h5 app-section-title mb-0"><i class="bi bi-newspaper text-primary"></i> Latest</h2>
+</div>
+
+<form method="get" class="row g-2 mb-4 app-card p-3">
+  <div class="col-md-4">
+    <input type="search" name="q" class="form-control" placeholder="Search articles &amp; videos…" value="{{ q }}">
+  </div>
+  <div class="col-md-3">
+    <select name="category" class="form-select" onchange="this.form.submit()">
+      <option value="">All categories</option>
+      {% for key, label in categories %}
+        <option value="{{ key }}" {% if key == active_category %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <select name="source" class="form-select" onchange="this.form.submit()">
+      <option value="">All sources</option>
+      {% for source in sources %}
+        <option value="{{ source.key }}" {% if source.key == active_source %}selected{% endif %}>{{ source.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <input type="date" name="from" class="form-control" value="{{ date_from }}" onchange="this.form.submit()">
+  </div>
+  <div class="col-12 d-flex gap-2">
+    <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-search"></i> Search</button>
+    {% if q or active_source or active_category or date_from %}
+      <a href="{% url 'home' %}" class="btn btn-outline-secondary btn-sm">Clear filters</a>
     {% endif %}
   </div>
-</div>
+</form>
+
+{% if items %}
+  <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
+    {% for item in items %}
+      {% if item.video_id %}
+        {% include "components/_video_card.html" with video=item only %}
+      {% else %}
+        {% include "components/_article_card.html" with article=item only %}
+      {% endif %}
+    {% endfor %}
+  </div>
+  {% include "components/_pagination.html" %}
+{% else %}
+  {% include "components/_empty_state.html" with icon="bi-search" title="No results" message="Try a different search or clear your filters." %}
+{% endif %}
+
 {% endblock %}

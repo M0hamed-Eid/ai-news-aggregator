@@ -2,7 +2,9 @@ from django.contrib.auth import views as auth_views
 from django.urls import path
 
 from .forms import BootstrapAuthenticationForm
-from .views import RegisterView
+from .views import ProfileView, RegisterView
+
+app_name = "accounts"
 
 urlpatterns = [
     path(
@@ -16,4 +18,5 @@ urlpatterns = [
     ),
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
     path("register/", RegisterView.as_view(), name="register"),
+    path("profile/", ProfileView.as_view(), name="profile"),
 ]

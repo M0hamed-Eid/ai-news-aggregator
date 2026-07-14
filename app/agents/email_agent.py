@@ -41,8 +41,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from app.agents.curator_agent import DigestItem, RankedArticle
-from app.config import UserProfile
+from app.agents.curator_agent import DigestItem, RankedArticle, UserProfile
 from app.llm.client_factory import get_llm_client_and_model
 
 logger = logging.getLogger(__name__)
@@ -152,15 +151,17 @@ class EmailAgent:
     -------------
     from app.agents.curator_agent import CuratorAgent
     from app.agents.email_agent import EmailAgent
+    from app.services.recipients import get_active_recipients
 
     digest_items = CuratorAgent.build_digest_items(articles + videos)
-    ranked       = CuratorAgent(config.user).rank_digests(digest_items)
-    response     = EmailAgent(config.user).build_response(
-        ranked_scores=ranked,
-        all_items=digest_items,
-        limit=10,
-    )
-    print(response.to_markdown())
+    for recipient in get_active_recipients(db):
+        ranked   = CuratorAgent(recipient.profile).rank_digests(digest_items)
+        response = EmailAgent(recipient.profile).build_response(
+            ranked_scores=ranked,
+            all_items=digest_items,
+            limit=recipient.max_items,
+        )
+        print(response.to_markdown())
     """
 
     def __init__(self, user_profile: UserProfile) -> None:

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}My Feed · AI Compass{% endblock %}
+{% block content %}
+
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 app-section-title mb-1"><i class="bi bi-stars text-primary"></i> My Feed</h1>
+    <p class="text-muted mb-0">Ranked for you based on your interests, persona, and sources.</p>
+  </div>
+  <a href="{% url 'onboarding:preferences' %}" class="btn btn-outline-primary btn-sm"><i class="bi bi-sliders"></i> Tune my feed</a>
+</div>
+
+{% if not has_ranking %}
+  <div class="alert alert-light border d-flex align-items-start gap-3 mb-4">
+    <i class="bi bi-info-circle-fill text-primary fs-4"></i>
+    <div>
+      <strong>Your personalized ranking will appear after your first digest run.</strong>
+      <p class="mb-0 text-muted small">Showing the newest content instead, already filtered by your source/category exclusions.</p>
+    </div>
+  </div>
+{% endif %}
+
+{% if items %}
+  <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
+    {% for item in items %}
+      {% if item.video_id %}
+        {% include "components/_video_card.html" with video=item rank=item.rank reasoning=item.reasoning only %}
+      {% else %}
+        {% include "components/_article_card.html" with article=item rank=item.rank reasoning=item.reasoning only %}
+      {% endif %}
+    {% endfor %}
+  </div>
+  {% include "components/_pagination.html" %}
+{% else %}
+  {% include "components/_empty_state.html" with icon="bi-stars" title="Your feed is empty" message="Once new content matching your interests is ingested, it will show up here." cta_url="/" cta_label="Browse latest news" %}
+{% endif %}
+
+{% endblock %}

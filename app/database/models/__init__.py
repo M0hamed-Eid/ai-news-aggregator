@@ -11,5 +11,8 @@
 from app.database.models.article import Article
 from app.database.models.youtube_video import YoutubeVideo
 from app.database.models.embedding import Embedding
+from app.database.models.source import Source
+from app.database.models.user_ranking import UserRanking
+from app.database.models.digest_log import DigestLog
 
-__all__ = ["Article", "YoutubeVideo", "Embedding"]
+__all__ = ["Article", "YoutubeVideo", "Embedding", "Source", "UserRanking", "DigestLog"]

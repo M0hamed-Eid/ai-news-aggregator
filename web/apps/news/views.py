@@ -7,14 +7,21 @@ Two content types share the same browsing UX:
 
 No models of its own. Search is a simple case-insensitive match for now;
 Postgres full-text search is a Phase 2 improvement.
+
+HomeView and FeedView also live here (not a separate app) — same domain
+(browsing catalog content), just two different entry points: Home is the
+public, unpersonalized "what's happening" page; Feed is the login-gated,
+personalized one. Both are wired at the project root in config/urls.py
+(alongside the pre-existing `home` route), not under this app's own
+`news:` namespace.
 """
+from datetime import datetime
+
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db.models import Q
 from django.views.generic import DetailView, ListView
 
-from apps.catalog.models import Article, YoutubeVideo
-
-from .utils import render_body
+from apps.catalog.models import Article, Source, UserRanking, YoutubeVideo
 
 
 class ArticleListView(LoginRequiredMixin, ListView):
@@ -57,7 +64,12 @@ class ArticleDetailView(LoginRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["source_label"] = self.object.source_label
-        ctx["body"] = render_body(self.object.content)
+        ctx["reasoning"] = _recommendation_reasoning(self.request.user, "article", self.object.pk)
+        ctx["related"] = (
+            Article.objects.filter(source=self.object.source)
+            .exclude(pk=self.object.pk)
+            .order_by("-published_at")[:4]
+        )
         return ctx
 
 
@@ -92,5 +104,129 @@ class VideoDetailView(LoginRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
-        ctx["transcript"] = render_body(self.object.content)
+        ctx["reasoning"] = _recommendation_reasoning(self.request.user, "youtube_video", self.object.pk)
+        return ctx
+
+
+def _recommendation_reasoning(user, content_type, content_id):
+    """CuratorAgent's own stated reasoning for this user+item, if a ranking exists — not synthesized."""
+    if not user.is_authenticated:
+        return None
+    ranking = UserRanking.objects.filter(
+        user_id=user.id, content_type=content_type, content_id=content_id
+    ).first()
+    return ranking.reasoning if ranking else None
+
+
+class HomeView(ListView):
+    """
+    Public, NOT personalized — the same content everyone sees, newest first.
+    Combines Article + YoutubeVideo (two querysets, no shared table) into one
+    sorted Python list; Paginator works fine over a plain list.
+    """
+
+    template_name = "home.html"
+    context_object_name = "items"
+    paginate_by = 12
+
+    def get_queryset(self):
+        articles = Article.objects.all()
+        videos = YoutubeVideo.objects.all()
+
+        query = self.request.GET.get("q", "").strip()
+        source = self.request.GET.get("source", "").strip()
+        category = self.request.GET.get("category", "").strip()
+        date_from = self.request.GET.get("from", "").strip()
+
+        if source:
+            articles = articles.filter(source=source)
+            videos = videos if source == "youtube" else videos.none()
+        if category:
+            source_keys = list(Source.objects.filter(category=category).values_list("key", flat=True))
+            articles = articles.filter(source__in=source_keys)
+            videos = videos if category == "media" else videos.none()
+        if query:
+            articles = articles.filter(
+                Q(title__icontains=query) | Q(summary__icontains=query) | Q(author__icontains=query)
+            )
+            videos = videos.filter(
+                Q(title__icontains=query) | Q(summary__icontains=query) | Q(channel_name__icontains=query)
+            )
+        if date_from:
+            try:
+                parsed = datetime.strptime(date_from, "%Y-%m-%d")
+                articles = articles.filter(published_at__date__gte=parsed.date())
+                videos = videos.filter(published_at__date__gte=parsed.date())
+            except ValueError:
+                pass
+
+        combined = list(articles) + list(videos)
+        combined.sort(key=lambda item: item.published_at, reverse=True)
+        self._all_items = combined
+        return combined
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        featured = [item for item in self._all_items[:12] if getattr(item, "image_url", None) or hasattr(item, "thumbnail_url")]
+        ctx.update({
+            "q": self.request.GET.get("q", "").strip(),
+            "active_source": self.request.GET.get("source", "").strip(),
+            "active_category": self.request.GET.get("category", "").strip(),
+            "date_from": self.request.GET.get("from", "").strip(),
+            "sources": Source.objects.filter(is_active=True).order_by("name"),
+            "categories": Source.CATEGORY_LABELS.items(),
+            "featured": featured[:3],
+        })
+        return ctx
+
+
+class FeedView(LoginRequiredMixin, ListView):
+    """
+    Personalized — reads the persisted output of CuratorAgent's ranking pass
+    (catalog.UserRanking, written by app/services/digest_service.py). Django
+    never ranks anything itself; it only reads what the batch pipeline
+    already computed for THIS user's last digest run.
+
+    Fallback for users with no ranking yet (never had a digest run): plain
+    date-ordered content with their own exclusions applied — an honest empty
+    state, not fake personalization.
+    """
+
+    template_name = "feed.html"
+    context_object_name = "items"
+    paginate_by = 12
+
+    def get_queryset(self):
+        rankings = list(
+            UserRanking.objects.filter(user_id=self.request.user.id).order_by("rank")
+        )
+        if rankings:
+            self._has_ranking = True
+            items = []
+            for r in rankings:
+                obj = r.content_object
+                if obj is not None:
+                    obj.rank = r.rank
+                    obj.reasoning = r.reasoning
+                    items.append(obj)
+            return items
+
+        self._has_ranking = False
+        profile = self.request.user.profile
+        excluded_sources = {e.value for e in profile.exclusions.filter(kind="source")}
+        excluded_categories = {e.value for e in profile.exclusions.filter(kind="category")}
+        category_source_keys = set(
+            Source.objects.filter(category__in=excluded_categories).values_list("key", flat=True)
+        ) if excluded_categories else set()
+        excluded_all = excluded_sources | category_source_keys
+
+        articles = Article.objects.exclude(source__in=excluded_all)
+        videos = YoutubeVideo.objects.all() if "media" not in excluded_categories and "youtube" not in excluded_all else YoutubeVideo.objects.none()
+        combined = list(articles) + list(videos)
+        combined.sort(key=lambda item: item.published_at, reverse=True)
+        return combined
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["has_ranking"] = self._has_ranking
         return ctx

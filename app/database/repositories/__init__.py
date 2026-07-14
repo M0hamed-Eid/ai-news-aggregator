@@ -3,5 +3,11 @@
 from app.database.repositories.article_repository import ArticleRepository
 from app.database.repositories.youtube_repository import YoutubeRepository
 from app.database.repositories.embedding_repository import EmbeddingRepository
+from app.database.repositories.source_repository import SourceRepository
+from app.database.repositories.user_ranking_repository import UserRankingRepository
+from app.database.repositories.digest_log_repository import DigestLogRepository
 
-__all__ = ["ArticleRepository", "YoutubeRepository", "EmbeddingRepository"]
+__all__ = [
+    "ArticleRepository", "YoutubeRepository", "EmbeddingRepository",
+    "SourceRepository", "UserRankingRepository", "DigestLogRepository",
+]
