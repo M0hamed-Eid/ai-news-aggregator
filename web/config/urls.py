@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.urls import include, path
 
+from apps.behavior.views import DigestRedirectView
 from apps.news.views import FeedView, HomeView
 
 urlpatterns = [
@@ -10,4 +11,6 @@ urlpatterns = [
     path("accounts/", include("apps.accounts.urls")),
     path("news/", include("apps.news.urls")),
     path("onboarding/", include("apps.onboarding.urls")),
+    path("behavior/", include("apps.behavior.urls")),
+    path("r/<str:token>/", DigestRedirectView.as_view(), name="digest_redirect"),
 ]

@@ -204,6 +204,79 @@ class UserRanking(ReadOnly, models.Model):
         return None
 
 
+class UserAffinity(ReadOnly, models.Model):
+    """
+    Per-user affinity weight derived from behavioral events (table:
+    user_affinities) — written by the nightly aggregation Celery task
+    (app/tasks/affinity_tasks.py), read-only here. Only dimension='source'
+    produces real rows until M8 ships topic/entity taxonomy.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        db_column="user_id",
+        db_constraint=False,
+        on_delete=models.DO_NOTHING,
+        related_name="affinities",
+    )
+    dimension = models.CharField(max_length=20)
+    key = models.CharField(max_length=200)
+    weight = models.FloatField()
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "user_affinities"
+        ordering = ["-weight"]
+        verbose_name = "user affinity"
+        verbose_name_plural = "user affinities"
+
+    def __str__(self):
+        return f"user_id={self.user_id} {self.dimension}={self.key} weight={self.weight:.3f}"
+
+
+class DigestClickToken(ReadOnly, models.Model):
+    """
+    One row per (recipient, item) minted when a digest email is built (table:
+    digest_click_tokens) — written by app/services/digest_service.py,
+    read-only here. Looked up by apps.behavior's DigestRedirectView to
+    attribute a digest click to a user + item before redirecting to the real
+    content URL.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    token = models.CharField(max_length=32, unique=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        db_column="user_id",
+        db_constraint=False,
+        on_delete=models.DO_NOTHING,
+        related_name="digest_click_tokens",
+    )
+    content_type = models.CharField(max_length=20)
+    content_id = models.BigIntegerField()
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "digest_click_tokens"
+        verbose_name = "digest click token"
+        verbose_name_plural = "digest click tokens"
+
+    def __str__(self):
+        return f"token={self.token} user_id={self.user_id} {self.content_type}:{self.content_id}"
+
+    @property
+    def content_object(self):
+        """Resolve to the actual Article or YoutubeVideo this token points at, or None."""
+        if self.content_type == "article":
+            return Article.objects.filter(pk=self.content_id).first()
+        if self.content_type == "youtube_video":
+            return YoutubeVideo.objects.filter(pk=self.content_id).first()
+        return None
+
+
 class DigestLog(ReadOnly, models.Model):
     """
     One row per digest email actually sent (table: digest_log) — written by

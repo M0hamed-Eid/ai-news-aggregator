@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     # Local apps
     "apps.accounts",
     "apps.onboarding",  # persona/interest/digest-settings, depends on accounts
+    "apps.behavior",  # user_events/saved_items (M7), depends on accounts
     "apps.catalog",  # read-only, pipeline-owned tables
     "apps.news",
 ]
@@ -79,6 +80,21 @@ DATABASES = {
 
 # Routes the read-only `catalog` app and blocks migrations on pipeline tables.
 DATABASE_ROUTERS = ["config.routers.PipelineRouter"]
+
+# -----------------------------------------------------------------------------
+# Cache — Redis, same instance the pipeline's Celery uses (see M6's
+# docker/docker-compose.yml `redis` service), but a SEPARATE logical DB index
+# (1, not 0) so Django's cache entries never collide with Celery's broker/
+# result-backend keys. Used for rate-limiting the event ingestion endpoint
+# (apps.behavior) — the default LocMemCache is per-process and would not
+# correctly enforce a shared limit across multiple gunicorn workers.
+# -----------------------------------------------------------------------------
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": env("REDIS_URL", default="redis://127.0.0.1:6379/1"),
+    }
+}
 
 AUTH_USER_MODEL = "accounts.User"
 

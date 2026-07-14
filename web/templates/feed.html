@@ -24,9 +24,9 @@
   <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
     {% for item in items %}
       {% if item.video_id %}
-        {% include "components/_video_card.html" with video=item rank=item.rank reasoning=item.reasoning only %}
+        {% include "components/_video_card.html" with video=item rank=item.rank reasoning=item.reasoning is_saved=item.is_saved is_hidden=item.is_hidden only %}
       {% else %}
-        {% include "components/_article_card.html" with article=item rank=item.rank reasoning=item.reasoning only %}
+        {% include "components/_article_card.html" with article=item rank=item.rank reasoning=item.reasoning is_saved=item.is_saved is_hidden=item.is_hidden only %}
       {% endif %}
     {% endfor %}
   </div>

@@ -21,6 +21,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db.models import Q
 from django.views.generic import DetailView, ListView
 
+from apps.behavior.services import attach_saved_state, mark_read
 from apps.catalog.models import Article, Source, UserRanking, YoutubeVideo
 
 
@@ -65,11 +66,14 @@ class ArticleDetailView(LoginRequiredMixin, DetailView):
         ctx = super().get_context_data(**kwargs)
         ctx["source_label"] = self.object.source_label
         ctx["reasoning"] = _recommendation_reasoning(self.request.user, "article", self.object.pk)
-        ctx["related"] = (
+        related = list(
             Article.objects.filter(source=self.object.source)
             .exclude(pk=self.object.pk)
             .order_by("-published_at")[:4]
         )
+        attach_saved_state(self.request.user, related)
+        ctx["related"] = related
+        mark_read(self.request.user, "article", self.object.pk)
         return ctx
 
 
@@ -105,6 +109,7 @@ class VideoDetailView(LoginRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["reasoning"] = _recommendation_reasoning(self.request.user, "youtube_video", self.object.pk)
+        mark_read(self.request.user, "youtube_video", self.object.pk)
         return ctx
 
 
@@ -167,7 +172,12 @@ class HomeView(ListView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
-        featured = [item for item in self._all_items[:12] if getattr(item, "image_url", None) or hasattr(item, "thumbnail_url")]
+        featured = [item for item in self._all_items[:12] if getattr(item, "image_url", None) or hasattr(item, "thumbnail_url")][:3]
+        # attach_saved_state is safe here even though `featured` isn't the
+        # paginated page — it's already a small fixed slice ([:12] then
+        # [:3]), not the full unpaginated result set.
+        attach_saved_state(self.request.user, featured)
+        attach_saved_state(self.request.user, ctx["items"])
         ctx.update({
             "q": self.request.GET.get("q", "").strip(),
             "active_source": self.request.GET.get("source", "").strip(),
@@ -175,7 +185,7 @@ class HomeView(ListView):
             "date_from": self.request.GET.get("from", "").strip(),
             "sources": Source.objects.filter(is_active=True).order_by("name"),
             "categories": Source.CATEGORY_LABELS.items(),
-            "featured": featured[:3],
+            "featured": featured,
         })
         return ctx
 
@@ -229,4 +239,5 @@ class FeedView(LoginRequiredMixin, ListView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["has_ranking"] = self._has_ranking
+        attach_saved_state(self.request.user, ctx["items"])
         return ctx

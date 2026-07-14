@@ -4,9 +4,12 @@ Reusable article card. Expects:
   rank      — optional int, shows a rank badge (Feed page)
   reasoning — optional str, "Recommended because..." (Feed page)
   featured  — optional bool, gives the card a highlighted left border
+  is_saved  — optional bool, initial Save-button state (default False)
+  is_hidden — optional bool, initial Hide-button state (default False)
 {% endcomment %}
 <div class="col">
-  <div class="app-card h-100 d-flex flex-column {% if featured %}app-card-featured{% endif %}">
+  <div class="app-card h-100 d-flex flex-column {% if featured %}app-card-featured{% endif %}"
+       data-content-type="article" data-content-id="{{ article.pk }}">
     <a href="{% url 'news:article_detail' article.pk %}" class="text-decoration-none">
       <div class="card-img-wrap">
         {% if article.image_url %}
@@ -31,9 +34,21 @@ Reusable article card. Expects:
       {% if reasoning %}
         <p class="app-recommend-box small mb-2"><i class="bi bi-lightbulb me-1"></i>{{ reasoning|truncatewords:22 }}</p>
       {% endif %}
-      <a href="{% url 'news:article_detail' article.pk %}" class="btn btn-outline-primary btn-sm mt-auto align-self-start">
-        Read more <i class="bi bi-arrow-right"></i>
-      </a>
+      <div class="d-flex align-items-center gap-2 mt-auto">
+        <a href="{% url 'news:article_detail' article.pk %}" class="btn btn-outline-primary btn-sm">
+          Read more <i class="bi bi-arrow-right"></i>
+        </a>
+        <button type="button" class="btn-icon-toggle ms-auto" data-action="save"
+                data-content-type="article" data-content-id="{{ article.pk }}"
+                data-active="{{ is_saved|yesno:'true,false' }}" aria-label="Save" title="Save">
+          <i class="bi {% if is_saved %}bi-bookmark-fill{% else %}bi-bookmark{% endif %}"></i>
+        </button>
+        <button type="button" class="btn-icon-toggle" data-action="hide"
+                data-content-type="article" data-content-id="{{ article.pk }}"
+                data-active="{{ is_hidden|yesno:'true,false' }}" aria-label="Show less like this" title="Show less like this">
+          <i class="bi {% if is_hidden %}bi-eye-slash-fill{% else %}bi-eye-slash{% endif %}"></i>
+        </button>
+      </div>
     </div>
   </div>
 </div>

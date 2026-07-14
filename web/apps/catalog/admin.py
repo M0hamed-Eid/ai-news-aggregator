@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Article, DigestLog, Source, UserRanking, YoutubeVideo
+from .models import Article, DigestClickToken, DigestLog, Source, UserAffinity, UserRanking, YoutubeVideo
 
 
 class ReadOnlyAdmin(admin.ModelAdmin):
@@ -54,3 +54,19 @@ class DigestLogAdmin(ReadOnlyAdmin):
     list_display = ("user", "sent_at")
     search_fields = ("user__email",)
     date_hierarchy = "sent_at"
+
+
+@admin.register(UserAffinity)
+class UserAffinityAdmin(ReadOnlyAdmin):
+    list_display = ("user", "dimension", "key", "weight", "updated_at")
+    list_filter = ("dimension",)
+    search_fields = ("user__email", "key")
+    ordering = ("-weight",)
+
+
+@admin.register(DigestClickToken)
+class DigestClickTokenAdmin(ReadOnlyAdmin):
+    list_display = ("token", "user", "content_type", "content_id", "created_at")
+    list_filter = ("content_type",)
+    search_fields = ("user__email", "token")
+    date_hierarchy = "created_at"

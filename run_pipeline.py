@@ -307,7 +307,9 @@ HANDLER_BUILDERS = {
     "arxiv": lambda cfg: ArxivScraper(categories=cfg["categories"]),
     "github_release": lambda cfg: GitHubReleaseScraper(repos=cfg["repos"]),
     "youtube": lambda cfg: YouTubeScraper(
-        channels=cfg["channels"], max_transcript_chars=cfg.get("max_transcript_chars", 8000)
+        # M7: no default cap — omit max_transcript_chars from a source row's
+        # config to capture full transcripts (see seed_sources.py).
+        channels=cfg["channels"], max_transcript_chars=cfg.get("max_transcript_chars")
     ),
     "federal_register": lambda cfg: FederalRegisterScraper(terms=cfg["terms"]),
     "huggingface": lambda cfg: HuggingFaceScraper(fetch_limit=cfg.get("fetch_limit", 100)),

@@ -30,9 +30,14 @@ class YouTubeScraper(BaseScraper):
  
     RSS_FEED_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
  
-    def __init__(self, channels: List[dict], max_transcript_chars: int):
+    def __init__(self, channels: List[dict], max_transcript_chars: int | None = None):
         super().__init__(source_name="youtube")
         self.channels = channels
+        # M7: full transcript capture — None (the default) means NO truncation.
+        # Consumers that need a bounded length (LLM prompts, embeddings) already
+        # cap their own input independently at the point of use (see
+        # app/agents/digest_agent.py, run_pipeline.py's run_embedding_phase) —
+        # this cap only ever affected what got STORED in Postgres.
         self.max_transcript_chars = max_transcript_chars
  
         # Build the YouTubeTranscriptApi instance with proxy if configured.
@@ -139,7 +144,7 @@ class YouTubeScraper(BaseScraper):
             raw_data  = transcript.fetch()
             full_text = " ".join(segment.text.strip() for segment in raw_data)
  
-            if len(full_text) > self.max_transcript_chars:
+            if self.max_transcript_chars and len(full_text) > self.max_transcript_chars:
                 full_text = full_text[:self.max_transcript_chars] + "... [transcript truncated]"
  
             return full_text

@@ -1,0 +1,80 @@
+"""
+Behavioral instrumentation (M7): raw event capture (user_events) and
+per-item save/read/hide state (saved_items).
+
+UserEvent is APPEND-ONLY — every row is a fact about what happened, never
+updated or deleted except by the nightly retention prune (see
+management/commands/prune_old_events.py).
+
+SavedItem is a per-(user, content) STATE table, upserted by whichever
+interaction happens first — an explicit save, a page view marking something
+read, or a hide action — not literally restricted to rows the user has
+bookmarked. Its success criterion (per docs/ROADMAP.md M7) is explicit that
+clicking/dwelling on an item, not just saving it, produces a saved_items row.
+"""
+from django.conf import settings
+from django.db import models
+
+
+CONTENT_TYPE_CHOICES = [
+    ("article", "Article"),
+    ("youtube_video", "YouTube video"),
+]
+
+
+class UserEvent(models.Model):
+    EVENT_TYPE_CHOICES = [
+        ("impression", "Impression"),
+        ("click", "Click"),
+        ("dwell", "Dwell"),
+        ("scroll", "Scroll"),
+        ("save", "Save"),
+        ("hide", "Hide"),
+        ("search", "Search"),
+        ("digest_click", "Digest click"),
+    ]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="events")
+    event_type = models.CharField(max_length=20, choices=EVENT_TYPE_CHOICES)
+    content_type = models.CharField(max_length=20, choices=CONTENT_TYPE_CHOICES, null=True, blank=True)
+    content_id = models.BigIntegerField(null=True, blank=True)
+    value = models.FloatField(
+        null=True, blank=True,
+        help_text="Numeric payload whose meaning depends on event_type — dwell ms, scroll %, etc.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "user_events"
+        indexes = [models.Index(fields=["user", "created_at"], name="ix_user_events_user_created")]
+
+    def __str__(self):
+        return f"user_id={self.user_id} {self.event_type} {self.content_type}:{self.content_id}"
+
+
+class SavedItem(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="saved_items")
+    content_type = models.CharField(max_length=20, choices=CONTENT_TYPE_CHOICES)
+    content_id = models.BigIntegerField()
+
+    is_saved = models.BooleanField(default=False)
+    saved_at = models.DateTimeField(null=True, blank=True)
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
+    is_hidden = models.BooleanField(default=False)
+    hidden_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "saved_items"
+        constraints = [
+            models.UniqueConstraint(fields=["user", "content_type", "content_id"], name="uq_saved_item"),
+        ]
+
+    def __str__(self):
+        return (
+            f"user_id={self.user_id} {self.content_type}:{self.content_id} "
+            f"saved={self.is_saved} read={self.is_read} hidden={self.is_hidden}"
+        )

@@ -35,6 +35,7 @@ celery_app = Celery(
     include=[
         "app.tasks.health_tasks",
         "app.tasks.pipeline_tasks",
+        "app.tasks.affinity_tasks",
     ],
 )
 
@@ -47,5 +48,10 @@ celery_app.conf.beat_schedule = {
     "run-full-pipeline-every-6-hours": {
         "task": "app.tasks.pipeline_tasks.run_full_pipeline_task",
         "schedule": crontab(minute=0, hour="*/6"),
+    },
+    # M7 — nightly affinity aggregation + event retention prune.
+    "aggregate-affinities-nightly": {
+        "task": "app.tasks.affinity_tasks.aggregate_affinities_task",
+        "schedule": crontab(minute=0, hour=3),
     },
 }

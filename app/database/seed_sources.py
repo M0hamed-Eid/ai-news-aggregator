@@ -77,7 +77,9 @@ SEED_SOURCES = [
                 {"name": "Grace Leung",                 "channel_id": "UCrB7UFnkosBjAhOg3a9NdWw"},
                 {"name": "Skill Leap AI",               "channel_id": "UCwSozl89jl2zUDzQ4jGJD3g"},
             ],
-            "max_transcript_chars": 8000,
+            # M7: full transcript capture — omitted (was 8000) so
+            # YouTubeScraper stops truncating stored transcripts. Processing
+            # long transcripts (chaptered summaries) is deferred to M12.
         },
         "schedule_hours": 24,
     },

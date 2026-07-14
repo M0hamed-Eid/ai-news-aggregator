@@ -166,6 +166,34 @@ a {
   margin-top: 0.5rem;
 }
 
+/* Save / Hide icon toggles (M7) */
+.btn-icon-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: var(--app-surface);
+  color: var(--app-muted);
+  font-size: 1rem;
+  line-height: 1;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.btn-icon-toggle:hover {
+  color: var(--app-brand);
+  border-color: var(--app-brand);
+}
+
+.btn-icon-toggle[data-active="true"] {
+  color: var(--app-brand);
+  border-color: var(--app-brand);
+  background: #eef0fb;
+}
+
 /* Featured / hero card gets a bit more presence */
 .app-card-featured {
   border-left: 4px solid var(--app-brand);

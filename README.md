@@ -234,6 +234,7 @@ python -m celery -A app.celery_app:celery_app beat --loglevel=info
 | `app.tasks.pipeline_tasks.embed_task` | Embed unembedded content |
 | `app.tasks.pipeline_tasks.digest_task` | Rank + send digests |
 | `app.tasks.pipeline_tasks.run_full_pipeline_task` | scrape → embed → digest, what beat schedules |
+| `app.tasks.affinity_tasks.aggregate_affinities_task` | Nightly (M7): raw `user_events` → time-decayed `user_affinities`, then prunes events >90 days old via a `manage.py prune_old_events` subprocess |
 
 Dispatch one manually to confirm the round-trip works:
 

@@ -22,6 +22,7 @@
 # between the two ORMs. Update this file to match whenever
 # web/apps/accounts/models.py or web/apps/onboarding/models.py change.
 
+from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, String
@@ -40,6 +41,7 @@ class DjangoUser(DjangoBase):
     email: Mapped[str] = mapped_column(String(254))
     first_name: Mapped[str] = mapped_column(String(150))
     is_active: Mapped[bool] = mapped_column(Boolean)
+    is_staff: Mapped[bool] = mapped_column(Boolean)
 
     profile: Mapped[Optional["DjangoUserProfile"]] = relationship(
         back_populates="user", uselist=False
@@ -117,3 +119,23 @@ class DjangoUserExclusion(DjangoBase):
     value: Mapped[str] = mapped_column(String(100))
 
     profile: Mapped["DjangoUserProfile"] = relationship(back_populates="exclusions")
+
+
+class DjangoUserEvent(DjangoBase):
+    """
+    Read-only mirror of Django's user_events (web/apps/behavior/models.py,
+    M7) — lets the nightly affinity-aggregation Celery task
+    (app/tasks/affinity_tasks.py) read raw behavioral events without the
+    pipeline ever writing to a Django-owned table. Pruning old rows is done
+    by Django itself (a management command, invoked via subprocess from that
+    same Celery task) — never a SQLAlchemy DELETE against this table.
+    """
+    __tablename__ = "user_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
+    event_type: Mapped[str] = mapped_column(String(20))
+    content_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    content_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    value: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

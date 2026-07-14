@@ -14,5 +14,10 @@ from app.database.models.embedding import Embedding
 from app.database.models.source import Source
 from app.database.models.user_ranking import UserRanking
 from app.database.models.digest_log import DigestLog
+from app.database.models.user_affinity import UserAffinity
+from app.database.models.digest_click_token import DigestClickToken
 
-__all__ = ["Article", "YoutubeVideo", "Embedding", "Source", "UserRanking", "DigestLog"]
+__all__ = [
+    "Article", "YoutubeVideo", "Embedding", "Source", "UserRanking", "DigestLog",
+    "UserAffinity", "DigestClickToken",
+]

@@ -91,7 +91,7 @@ class YoutubeVideo(Base):
     content: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
-        comment="Full transcript text (truncated to max_transcript_chars)",
+        comment="Full transcript text (M7: captured in full — not truncated at scrape time)",
     )
 
     # One-paragraph AI summary — set by the curator agent after scraping

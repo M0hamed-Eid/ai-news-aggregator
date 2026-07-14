@@ -6,3 +6,4 @@ gunicorn>=23.0              # production WSGI server
 whitenoise>=6.7             # static files in production
 markdown>=3.6               # render cleaned article/transcript bodies
 bleach>=6.1                 # sanitize the rendered HTML
+redis>=5.0                  # cache backend (django.core.cache.backends.redis.RedisCache) for event rate-limiting

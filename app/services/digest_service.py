@@ -60,6 +60,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union
 
@@ -74,6 +75,7 @@ from app.database import (
 )
 from app.database.models.article import Article
 from app.database.models.youtube_video import YoutubeVideo
+from app.database.repositories.digest_click_token_repository import DigestClickTokenRepository
 from app.database.repositories.user_ranking_repository import UserRankingRepository
 from app.services.recipients import Recipient, get_active_recipients, get_source_categories
 
@@ -84,6 +86,12 @@ logger = logging.getLogger(__name__)
 
 # Raise this if you have a very large DB — set to None for no limit
 _SUMMARISE_BATCH_LIMIT = None
+
+# Base URL of the Django web app — used to build tracked digest-click
+# redirect links (M7). Read directly via os.getenv (not python-dotenv here)
+# since load_dotenv() already ran at the entry point (run_pipeline.py /
+# app/celery_app.py) before this module is ever imported.
+_DJANGO_BASE_URL = os.getenv("DJANGO_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
 # ---------------------------------------------------------------------------
@@ -261,13 +269,14 @@ class DigestService:
                 result.errors.append(msg)
                 continue
 
+            item_map = {d.digest_id: d for d in filtered_items}
+
             # Persist the ranking for the web app's personalized feed (Django
             # never re-ranks — it only ever reads this table). Real Django
             # users only; the zero-active-users fallback recipient has no
             # user_id and nothing to persist against.
             if recipient.user_id is not None:
                 try:
-                    item_map = {d.digest_id: d for d in filtered_items}
                     with get_db_session() as db:
                         UserRankingRepository(db).replace_for_user(recipient.user_id, ranked, item_map)
                 except Exception as exc:
@@ -276,11 +285,55 @@ class DigestService:
                         recipient.user_id, exc, exc_info=True,
                     )
 
+            # ── Digest click tokens (M7): tracked redirect links so digest
+            # CTR is measurable. Tokens are minted ONLY for the items that
+            # actually make this recipient's email (ranked[:limit] — the same
+            # slice EmailAgent.build_response_with_urls() applies internally,
+            # replicated here so we never mint a token for an item that gets
+            # cut), and ONLY for real Django users — the zero-active-users
+            # fallback recipient has no user_id to attribute a click to, so
+            # it always gets the original (untracked) content_meta.
+            recipient_content_meta = content_meta
+            if recipient.user_id is not None:
+                token_targets: List[tuple[str, int, str]] = []  # (content_type, content_id, digest_id)
+                for r in ranked[: recipient.max_items]:
+                    digest = item_map.get(r.digest_id)
+                    if digest is None:
+                        continue
+                    content_type = "youtube_video" if digest.article_type == "youtube" else "article"
+                    token_targets.append((content_type, digest.db_id, r.digest_id))
+
+                if token_targets:
+                    try:
+                        with get_db_session() as db:
+                            token_map = DigestClickTokenRepository(db).mint_for_recipient(
+                                recipient.user_id,
+                                [(content_type, content_id) for content_type, content_id, _ in token_targets],
+                            )
+                        # Shallow-copy per recipient — content_meta is shared
+                        # across every recipient in this loop; mutating it in
+                        # place would leak one recipient's token URL into the
+                        # next recipient's email for the same shared item.
+                        recipient_content_meta = dict(content_meta)
+                        for content_type, content_id, digest_id in token_targets:
+                            token = token_map.get((content_type, content_id))
+                            if token and digest_id in recipient_content_meta:
+                                overridden = dict(content_meta[digest_id])
+                                overridden["url"] = f"{_DJANGO_BASE_URL}/r/{token}/"
+                                recipient_content_meta[digest_id] = overridden
+                    except Exception as exc:
+                        logger.error(
+                            "DigestService: failed to mint digest click tokens for user_id=%s — %s "
+                            "(falling back to untracked URLs for this recipient)",
+                            recipient.user_id, exc, exc_info=True,
+                        )
+                        recipient_content_meta = content_meta
+
             try:
                 response = EmailAgent(recipient.profile).build_response_with_urls(
                     ranked_scores=ranked,
                     all_items=filtered_items,
-                    content_meta=content_meta,
+                    content_meta=recipient_content_meta,
                     limit=recipient.max_items,
                 )
                 result.digest_responses.append(RecipientDigest(recipient=recipient, response=response))
