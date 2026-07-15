@@ -1,6 +1,10 @@
 from django.contrib import admin
 
-from .models import Article, DigestClickToken, DigestLog, Source, UserAffinity, UserRanking, YoutubeVideo
+from .models import (
+    Article, ContentCluster, ContentClusterMember, ContentEnrichment, ContentEntity,
+    ContentScore, ContentTopic, DigestClickToken, DigestLog, Entity, Source,
+    TaxonomyTopic, UserAffinity, UserRanking, YoutubeVideo,
+)
 
 
 class ReadOnlyAdmin(admin.ModelAdmin):
@@ -70,3 +74,55 @@ class DigestClickTokenAdmin(ReadOnlyAdmin):
     list_filter = ("content_type",)
     search_fields = ("user__email", "token")
     date_hierarchy = "created_at"
+
+
+@admin.register(TaxonomyTopic)
+class TaxonomyTopicAdmin(ReadOnlyAdmin):
+    list_display = ("name", "slug", "category", "sort_order", "is_active")
+    list_filter = ("category", "is_active")
+    search_fields = ("name", "slug")
+    ordering = ("sort_order",)
+
+
+@admin.register(ContentTopic)
+class ContentTopicAdmin(ReadOnlyAdmin):
+    list_display = ("content_type", "content_id", "taxonomy_topic", "confidence")
+    list_filter = ("content_type", "taxonomy_topic")
+
+
+@admin.register(Entity)
+class EntityAdmin(ReadOnlyAdmin):
+    list_display = ("name", "entity_type", "created_at")
+    list_filter = ("entity_type",)
+    search_fields = ("name",)
+
+
+@admin.register(ContentEntity)
+class ContentEntityAdmin(ReadOnlyAdmin):
+    list_display = ("content_type", "content_id", "entity")
+    list_filter = ("content_type",)
+
+
+@admin.register(ContentCluster)
+class ContentClusterAdmin(ReadOnlyAdmin):
+    list_display = ("id", "created_at", "updated_at")
+
+
+@admin.register(ContentClusterMember)
+class ContentClusterMemberAdmin(ReadOnlyAdmin):
+    list_display = ("content_type", "content_id", "cluster", "similarity_to_centroid")
+    list_filter = ("content_type",)
+
+
+@admin.register(ContentEnrichment)
+class ContentEnrichmentAdmin(ReadOnlyAdmin):
+    list_display = ("content_type", "content_id", "content_category", "technical_depth", "enrichment_version", "enriched_at")
+    list_filter = ("content_category", "technical_depth", "enrichment_version")
+    date_hierarchy = "enriched_at"
+
+
+@admin.register(ContentScore)
+class ContentScoreAdmin(ReadOnlyAdmin):
+    list_display = ("content_type", "content_id", "score", "score_version", "computed_at")
+    list_filter = ("score_version",)
+    ordering = ("-score",)

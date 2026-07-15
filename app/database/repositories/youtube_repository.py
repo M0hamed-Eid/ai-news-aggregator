@@ -141,6 +141,26 @@ class YoutubeRepository(BaseRepository[YoutubeVideo]):
             .all()
         )
 
+    def get_unenriched(self, limit: int = 20) -> List[YoutubeVideo]:
+        """
+        Return videos with no content_enrichment row yet (M8) — see
+        ArticleRepository.get_unenriched()'s docstring for why this replaces
+        get_unsummarised() as the enrichment-phase driver.
+        """
+        from app.database.models.content_enrichment import ContentEnrichment
+
+        enriched_ids = self.db.query(ContentEnrichment.content_id).filter(
+            ContentEnrichment.content_type == "youtube_video"
+        )
+        return (
+            self.db.query(YoutubeVideo)
+            .filter(~YoutubeVideo.id.in_(enriched_ids))
+            .filter(YoutubeVideo.content.isnot(None))  # no point enriching empty transcripts
+            .order_by(YoutubeVideo.published_at.desc())
+            .limit(limit)
+            .all()
+        )
+
     def get_recent(self, hours: int = 24, limit: int = 100) -> List[YoutubeVideo]:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         return (

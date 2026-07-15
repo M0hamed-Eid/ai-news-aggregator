@@ -31,13 +31,30 @@ class Persona(models.Model):
 
 
 class Interest(models.Model):
-    """A topic a user can follow (e.g. "Large Language Models")."""
+    """A topic a user can follow (e.g. "Large Language Models").
+
+    taxonomy_topic (M8): links to the pipeline-owned taxonomy_topics table
+    (app/database/models/taxonomy_topic.py) via the read-only catalog mirror,
+    matched by slug in a data migration — NOT a real cross-ORM FK, same
+    db_constraint=False/DO_NOTHING convention as every other pipeline-mirror
+    reference in this codebase (UserRanking.user, DigestClickToken.user,
+    etc., just in the other direction). This is what lets user interests and
+    content topics share ONE controlled vocabulary.
+    """
 
     slug = models.SlugField(unique=True)
     name = models.CharField(max_length=200)
     category = models.CharField(max_length=100, blank=True, null=True)
     sort_order = models.IntegerField(default=0)
     is_active = models.BooleanField(default=True)
+    taxonomy_topic = models.ForeignKey(
+        "catalog.TaxonomyTopic",
+        db_constraint=False,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="interests",
+    )
 
     class Meta:
         db_table = "interests"

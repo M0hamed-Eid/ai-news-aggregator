@@ -174,7 +174,7 @@ generated file's imports if you touch `embeddings.vector` later.
            │ enqueues via
 ┌──────────▼────────────┐        ┌─────────────────┐
 │  Redis (6379)          │◄──────►│  Celery worker  │  --pool=solo (Windows)
-│  broker + result store │        │  app/tasks/*    │  runs scrape/embed/digest
+│  broker + result store │        │  app/tasks/*    │  runs scrape/embed/enrich/cluster/score
 └──────────┬─────────────┘        └─────────────────┘
            │ schedules
 ┌──────────▼─────────────┐
@@ -232,8 +232,10 @@ python -m celery -A app.celery_app:celery_app beat --loglevel=info
 | `app.tasks.health_tasks.ping_task` | Trivial round-trip check |
 | `app.tasks.pipeline_tasks.scrape_task` | One source or "all" |
 | `app.tasks.pipeline_tasks.embed_task` | Embed unembedded content |
-| `app.tasks.pipeline_tasks.digest_task` | Rank + send digests |
-| `app.tasks.pipeline_tasks.run_full_pipeline_task` | scrape → embed → digest, what beat schedules |
+| `app.tasks.pipeline_tasks.digest_task` | Enrich unenriched content (one `EnrichmentAgent` LLM call/item) + rank + send digests |
+| `app.tasks.pipeline_tasks.cluster_task` | M8: cross-source near-duplicate clustering (Union-Find over pgvector k-NN) |
+| `app.tasks.pipeline_tasks.score_task` | M8: heuristic quality scoring for every article/video |
+| `app.tasks.pipeline_tasks.run_full_pipeline_task` | scrape → embed → enrich/digest → cluster → score, what beat schedules |
 | `app.tasks.affinity_tasks.aggregate_affinities_task` | Nightly (M7): raw `user_events` → time-decayed `user_affinities`, then prunes events >90 days old via a `manage.py prune_old_events` subprocess |
 
 Dispatch one manually to confirm the round-trip works:
@@ -276,6 +278,25 @@ PIPELINE SUMMARY
   TOTAL    : scraped=  17  inserted=  14  skipped=   3
 ==============================================================
 ```
+
+Unless `--dry-run` is passed, every run also does (M8 — Content Intelligence Layer):
+1. **Enrichment** — one `EnrichmentAgent` LLM call per unenriched article/video: topics, entities, `content_category`, `technical_depth`, `why_it_matters`, etc. (replaces the old `DigestAgent` summary-only call).
+2. **Clustering** — near-duplicate/cross-source grouping via Union-Find over pgvector k-NN neighbors (`content_clusters` / `content_cluster_members`). `huggingface_model` articles are excluded from the candidate pool — their templated auto-generated summaries otherwise "bridge" unrelated uploads into one mega-cluster.
+3. **Scoring** — a heuristic quality score (`content_scores`) computed for every article/video, enriched or not.
+
+### Backfilling enrichment for pre-M8 content
+
+Existing articles/videos scraped before M8 have summaries but no `content_enrichment` row. This corpus is **not** backfilled automatically — run it deliberately when ready:
+
+```bash
+# Small batch via local Ollama (no API cost) — good for a first pass
+python -m app.database.backfill_enrichment --limit 50 --provider local
+
+# Full corpus via Groq
+python -m app.database.backfill_enrichment --provider groq
+```
+
+Backfilled rows are tagged with a distinct `enrichment_version` (`v1-backfill-ollama` by default via `--version`) so they can be told apart from rows produced by the normal pipeline run.
 
 ---
 

@@ -22,7 +22,8 @@ from django.db.models import Q
 from django.views.generic import DetailView, ListView
 
 from apps.behavior.services import attach_saved_state, mark_read
-from apps.catalog.models import Article, Source, UserRanking, YoutubeVideo
+from apps.catalog.models import Article, ContentTopic, Source, TaxonomyTopic, UserRanking, YoutubeVideo
+from apps.catalog.services import attach_topics, get_enrichment, get_entities, get_related_items
 
 
 class ArticleListView(LoginRequiredMixin, ListView):
@@ -66,13 +67,27 @@ class ArticleDetailView(LoginRequiredMixin, DetailView):
         ctx = super().get_context_data(**kwargs)
         ctx["source_label"] = self.object.source_label
         ctx["reasoning"] = _recommendation_reasoning(self.request.user, "article", self.object.pk)
-        related = list(
-            Article.objects.filter(source=self.object.source)
-            .exclude(pk=self.object.pk)
-            .order_by("-published_at")[:4]
-        )
+
+        # Cross-source Related (M8): cluster membership first, same-source
+        # query as a fallback for items not yet clustered (not everything
+        # is — clustering runs on a schedule, not synchronously at scrape time).
+        related = get_related_items("article", self.object.pk, limit=4)
+        if not related:
+            related = list(
+                Article.objects.filter(source=self.object.source)
+                .exclude(pk=self.object.pk)
+                .order_by("-published_at")[:4]
+            )
         attach_saved_state(self.request.user, related)
+        attach_topics(related)
         ctx["related"] = related
+
+        attach_topics([self.object])
+        ctx["topics"] = self.object.topics
+        enrichment = get_enrichment("article", self.object.pk)
+        ctx["enrichment"] = enrichment
+        ctx["entities"] = get_entities("article", self.object.pk)
+
         mark_read(self.request.user, "article", self.object.pk)
         return ctx
 
@@ -109,6 +124,22 @@ class VideoDetailView(LoginRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["reasoning"] = _recommendation_reasoning(self.request.user, "youtube_video", self.object.pk)
+
+        # Cross-source Related (M8) — VideoDetailView had NO related-content
+        # logic before this; cluster membership only (no same-source
+        # fallback query existed here previously, so [] is an honest empty
+        # state rather than inventing a new same-channel query unasked-for).
+        related = get_related_items("youtube_video", self.object.pk, limit=4)
+        attach_saved_state(self.request.user, related)
+        attach_topics(related)
+        ctx["related"] = related
+
+        attach_topics([self.object])
+        ctx["topics"] = self.object.topics
+        enrichment = get_enrichment("youtube_video", self.object.pk)
+        ctx["enrichment"] = enrichment
+        ctx["entities"] = get_entities("youtube_video", self.object.pk)
+
         mark_read(self.request.user, "youtube_video", self.object.pk)
         return ctx
 
@@ -141,6 +172,7 @@ class HomeView(ListView):
         query = self.request.GET.get("q", "").strip()
         source = self.request.GET.get("source", "").strip()
         category = self.request.GET.get("category", "").strip()
+        topic = self.request.GET.get("topic", "").strip()
         date_from = self.request.GET.get("from", "").strip()
 
         if source:
@@ -150,6 +182,20 @@ class HomeView(ListView):
             source_keys = list(Source.objects.filter(category=category).values_list("key", flat=True))
             articles = articles.filter(source__in=source_keys)
             videos = videos if category == "media" else videos.none()
+        if topic:
+            # Same two-step ID-lookup shape as the category filter above —
+            # ContentTopic is keyed by (content_type, content_id), so resolve
+            # matching ids first, then filter each queryset by pk__in.
+            article_ids = list(
+                ContentTopic.objects.filter(taxonomy_topic__slug=topic, content_type="article")
+                .values_list("content_id", flat=True)
+            )
+            video_ids = list(
+                ContentTopic.objects.filter(taxonomy_topic__slug=topic, content_type="youtube_video")
+                .values_list("content_id", flat=True)
+            )
+            articles = articles.filter(pk__in=article_ids)
+            videos = videos.filter(pk__in=video_ids)
         if query:
             articles = articles.filter(
                 Q(title__icontains=query) | Q(summary__icontains=query) | Q(author__icontains=query)
@@ -173,18 +219,22 @@ class HomeView(ListView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         featured = [item for item in self._all_items[:12] if getattr(item, "image_url", None) or hasattr(item, "thumbnail_url")][:3]
-        # attach_saved_state is safe here even though `featured` isn't the
-        # paginated page — it's already a small fixed slice ([:12] then
-        # [:3]), not the full unpaginated result set.
+        # attach_saved_state/attach_topics are safe here even though
+        # `featured` isn't the paginated page — it's already a small fixed
+        # slice ([:12] then [:3]), not the full unpaginated result set.
         attach_saved_state(self.request.user, featured)
+        attach_topics(featured)
         attach_saved_state(self.request.user, ctx["items"])
+        attach_topics(ctx["items"])
         ctx.update({
             "q": self.request.GET.get("q", "").strip(),
             "active_source": self.request.GET.get("source", "").strip(),
             "active_category": self.request.GET.get("category", "").strip(),
+            "active_topic": self.request.GET.get("topic", "").strip(),
             "date_from": self.request.GET.get("from", "").strip(),
             "sources": Source.objects.filter(is_active=True).order_by("name"),
             "categories": Source.CATEGORY_LABELS.items(),
+            "topics": TaxonomyTopic.objects.filter(is_active=True).order_by("sort_order"),
             "featured": featured,
         })
         return ctx
@@ -240,4 +290,5 @@ class FeedView(LoginRequiredMixin, ListView):
         ctx = super().get_context_data(**kwargs)
         ctx["has_ranking"] = self._has_ranking
         attach_saved_state(self.request.user, ctx["items"])
+        attach_topics(ctx["items"])
         return ctx

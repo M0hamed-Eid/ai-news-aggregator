@@ -1,11 +1,11 @@
 # app/llm/client_factory.py
 #
 # Single place that decides which LLM backend each agent talks to.
-# Before this, every agent (DigestAgent, CuratorAgent, EmailAgent) built its
-# own Groq(api_key=...) client directly — meaning "switch to local" meant
-# editing 3 files. Now it's one env var.
+# Before this, every agent (DigestAgent [now EnrichmentAgent], CuratorAgent,
+# EmailAgent) built its own Groq(api_key=...) client directly — meaning
+# "switch to local" meant editing 3 files. Now it's one env var.
 #
-# task="simple"    -> DigestAgent, EmailAgent (summaries, intros)
+# task="simple"    -> EnrichmentAgent, EmailAgent (summaries, intros)
 #                      can run locally via Ollama.
 # task="reasoning" -> CuratorAgent (ranking) stays on Groq's 70B model —
 #                      a 70B-class model doesn't fit a 16GB GPU without

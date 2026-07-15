@@ -16,6 +16,8 @@ from run_pipeline import (
     run_scraping_phases,
     run_embedding_phase,
     run_digest_phase,
+    run_clustering_phase,
+    run_scoring_phase,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,11 +46,27 @@ def digest_task(hours: int = DEFAULT_HOURS, skip_email: bool = False) -> dict:
     return result.__dict__
 
 
+@celery_app.task(name="app.tasks.pipeline_tasks.cluster_task")
+def cluster_task() -> dict:
+    result = PipelineResult()
+    run_clustering_phase(result)
+    return result.__dict__
+
+
+@celery_app.task(name="app.tasks.pipeline_tasks.score_task")
+def score_task() -> dict:
+    result = PipelineResult()
+    run_scoring_phase(result)
+    return result.__dict__
+
+
 @celery_app.task(name="app.tasks.pipeline_tasks.run_full_pipeline_task")
 def run_full_pipeline_task(hours: int = DEFAULT_HOURS, skip_email: bool = False) -> dict:
-    """Mirrors run_pipeline.main()'s sequence: scrape -> embed -> digest."""
+    """Mirrors run_pipeline.main()'s sequence: scrape -> embed -> digest -> cluster -> score."""
     result = PipelineResult()
     run_scraping_phases("all", hours, dry_run=False, result=result)
     run_embedding_phase(result)
     run_digest_phase(hours, dry_run=False, skip_email=skip_email, result=result)
+    run_clustering_phase(result)
+    run_scoring_phase(result)
     return result.__dict__

@@ -4,21 +4,34 @@
 #
 # Why this service exists
 # -----------------------
-# The three agents (DigestAgent, CuratorAgent, EmailAgent) each do one job.
-# Someone has to drive them in sequence and handle the database I/O between
-# steps.  Putting that logic in run_pipeline.py would make it a monolith; a
-# dedicated service keeps concerns separated and makes the pipeline easy to
-# test and extend (e.g. scheduling, retries, dry-run mode).
+# The three agents (EnrichmentAgent, CuratorAgent, EmailAgent) each do one
+# job. Someone has to drive them in sequence and handle the database I/O
+# between steps. Putting that logic in run_pipeline.py would make it a
+# monolith; a dedicated service keeps concerns separated and makes the
+# pipeline easy to test and extend (e.g. scheduling, retries, dry-run mode).
 #
 # Responsibility breakdown
 # ------------------------
-# 1. Fetch unsummarised records from the DB (via repositories).
-# 2. Call DigestAgent to generate title + summary for each record.
-# 3. Persist the summaries back to the DB.
-# 4. Fetch ALL recent records (summarised or not) for ranking.
+# 1. Fetch unenriched records from the DB (via repositories).
+# 2. Call EnrichmentAgent's single structured LLM call per record — summary,
+#    content_category, technical_depth, structured fields, why_it_matters,
+#    topics, entities.
+# 3. Persist across Article/YoutubeVideo.summary + content_enrichment +
+#    content_topics + content_entities, and re-embed immediately.
+# 4. Fetch ALL recent records (enriched or not) for ranking.
 # 5. Call CuratorAgent to rank them.
 # 6. Call EmailAgent to build the final EmailDigestResponse.
 # 7. Return the response to the caller (run_pipeline.py, a scheduler, etc.).
+#
+# M8 — Content Intelligence Layer (2026-07-15)
+# ----------------------------------------------
+# Replaced DigestAgent (title+summary only) with EnrichmentAgent (Principle
+# 4: ONE structured LLM call per item, everything downstream milestones
+# need). `_summarise_unsummarised()` is now `_enrich_unenriched()` — driven
+# by `get_unenriched()` (checks content_enrichment existence), NOT the old
+# `get_unsummarised()` (checked `summary IS NULL`), since every pre-M8 row
+# already has a summary but zero content_enrichment rows; the old check
+# would have silently skipped the entire backfill corpus forever.
 
 # app/services/digest_service.py
 #
@@ -65,7 +78,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union
 
 from app.agents.curator_agent import CuratorAgent, DigestItem
-from app.agents.digest_agent import DigestAgent
+from app.agents.enrichment_agent import ENRICHMENT_VERSION, EnrichmentAgent, EnrichmentOutput
 from app.agents.email_agent import EmailAgent, EmailDigestResponse
 from app.config import AppConfig
 from app.database import (
@@ -75,8 +88,14 @@ from app.database import (
 )
 from app.database.models.article import Article
 from app.database.models.youtube_video import YoutubeVideo
+from app.database.repositories.content_entity_repository import ContentEntityRepository
+from app.database.repositories.content_enrichment_repository import ContentEnrichmentRepository
+from app.database.repositories.content_topic_repository import ContentTopicRepository
 from app.database.repositories.digest_click_token_repository import DigestClickTokenRepository
+from app.database.repositories.embedding_repository import EmbeddingRepository
+from app.database.repositories.taxonomy_topic_repository import TaxonomyTopicRepository
 from app.database.repositories.user_ranking_repository import UserRankingRepository
+from app.embeddings.embedding_service import embed_text
 from app.services.recipients import Recipient, get_active_recipients, get_source_categories
 
 from app.utils.reading_time import estimate_reading_minutes, estimate_watch_minutes
@@ -124,9 +143,9 @@ class DigestServiceResult:
 
 class DigestService:
     """
-    Orchestrates DigestAgent → [CuratorAgent → EmailAgent, once per active
-    recipient] in sequence, reading from and writing to the database via the
-    repository layer.
+    Orchestrates EnrichmentAgent → [CuratorAgent → EmailAgent, once per
+    active recipient] in sequence, reading from and writing to the database
+    via the repository layer.
 
     Parameters
     ----------
@@ -139,6 +158,11 @@ class DigestService:
                    UserDigestSettings.max_items takes precedence
     dry_run      : if True, skip all DB writes and return a response based
                    on already-summarised records only
+    enrichment_version : tag persisted to content_enrichment.enrichment_version
+                   for every row this run writes — defaults to the current
+                   prompt version (ENRICHMENT_VERSION), override for a
+                   distinctly-tagged pass (e.g. an Ollama backfill run —
+                   see app/database/backfill_enrichment.py).
     """
 
     def __init__(
@@ -147,18 +171,20 @@ class DigestService:
         hours_window: int = 144,
         top_n: int = 10,
         dry_run: bool = False,
+        enrichment_version: str = ENRICHMENT_VERSION,
     ) -> None:
         self._config = config
         self._hours_window = hours_window
         self._top_n = top_n
         self._dry_run = dry_run
+        self._enrichment_version = enrichment_version
 
-        self._digest_agent = DigestAgent()
-        # CuratorAgent/EmailAgent are no longer constructed here — each is
-        # cheap to build (an LLM client handle + a prompt string) and there's
-        # one active recipient's worth of ranking happening per user, so
-        # run() constructs a fresh pair per recipient instead of binding one
-        # globally shared instance to a single hardcoded profile.
+        # EnrichmentAgent is NOT constructed here — it needs the live
+        # taxonomy_topics vocabulary (a DB read) to validate LLM-returned
+        # topic slugs against, so _enrich_unenriched() builds it once per
+        # run instead. CuratorAgent/EmailAgent are similarly constructed
+        # fresh per recipient in run() — cheap (an LLM client handle + a
+        # prompt string), no benefit to binding one shared instance globally.
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -167,9 +193,9 @@ class DigestService:
     def run(self) -> DigestServiceResult:
         result = DigestServiceResult()
 
-        # ── Step 1: Generate summaries for unsummarised records ──────────
+        # ── Step 1: Enrich unenriched records (summary + M8 structured fields) ──
         if not self._dry_run:
-            art_count, vid_count, errors = self._summarise_unsummarised()
+            art_count, vid_count, errors = self._enrich_unenriched()
             result.articles_summarised = art_count
             result.videos_summarised = vid_count
             result.errors.extend(errors)
@@ -348,40 +374,55 @@ class DigestService:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _summarise_unsummarised(
+    def _enrich_unenriched(
         self,
+        limit: Optional[int] = None,
     ) -> tuple[int, int, List[str]]:
         """
-        Pull unsummarised records from the DB, generate summaries, persist.
+        Pull unenriched records from the DB, run EnrichmentAgent's single
+        structured LLM call, persist across Article/YoutubeVideo.summary +
+        content_enrichment + content_topics + content_entities, and
+        re-embed immediately.
 
-        Returns (articles_summarised, videos_summarised, error_messages).
+        `limit` overrides _SUMMARISE_BATCH_LIMIT — used by
+        app/database/backfill_enrichment.py to run small, controlled
+        batches rather than the whole corpus in one call.
+
+        Returns (articles_enriched, videos_enriched, error_messages).
         """
         art_count = vid_count = 0
         errors: List[str] = []
+        batch_limit = limit if limit is not None else _SUMMARISE_BATCH_LIMIT
+
+        with get_db_session() as db:
+            allowed_topics = TaxonomyTopicRepository(db).get_active_slugs()
+        agent = EnrichmentAgent(allowed_topics=allowed_topics)
 
         # Articles — raised limit so older records aren't silently skipped
         try:
             with get_db_session() as db:
                 repo = ArticleRepository(db)
-                unsummarised_articles: List[Article] = repo.get_unsummarised(
-                    limit=_SUMMARISE_BATCH_LIMIT
+                unenriched_articles: List[Article] = repo.get_unenriched(
+                    limit=batch_limit
                 )
                 logger.info(
-                    "DigestService: found %d unsummarised articles",
-                    len(unsummarised_articles),
+                    "DigestService: found %d unenriched articles",
+                    len(unenriched_articles),
                 )
-                for article in unsummarised_articles:
-                    digest = self._digest_agent.digest_article(article)
-                    if digest is None:
+                for article in unenriched_articles:
+                    output = agent.enrich_article(article)
+                    if output is None:
                         logger.warning(
-                            "DigestService: no digest generated for article id=%d",
+                            "DigestService: no enrichment generated for article id=%d",
                             article.id,
                         )
                         continue
-                    if repo.update_summary(article.id, digest.summary):
+                    if repo.update_summary(article.id, output.summary):
                         art_count += 1
+                    self._persist_enrichment(db, "article", article.id, output)
+                    self._reembed(db, "article", article.id, output.summary)
         except Exception as exc:
-            msg = f"DigestService: article summarisation failed — {exc}"
+            msg = f"DigestService: article enrichment failed — {exc}"
             logger.error(msg, exc_info=True)
             errors.append(msg)
 
@@ -389,29 +430,71 @@ class DigestService:
         try:
             with get_db_session() as db:
                 repo_v = YoutubeRepository(db)
-                unsummarised_videos: List[YoutubeVideo] = repo_v.get_unsummarised(
-                    limit=_SUMMARISE_BATCH_LIMIT
+                unenriched_videos: List[YoutubeVideo] = repo_v.get_unenriched(
+                    limit=batch_limit
                 )
                 logger.info(
-                    "DigestService: found %d unsummarised videos",
-                    len(unsummarised_videos),
+                    "DigestService: found %d unenriched videos",
+                    len(unenriched_videos),
                 )
-                for video in unsummarised_videos:
-                    digest = self._digest_agent.digest_video(video)
-                    if digest is None:
+                for video in unenriched_videos:
+                    output = agent.enrich_video(video)
+                    if output is None:
                         logger.warning(
-                            "DigestService: no digest generated for video id=%d",
+                            "DigestService: no enrichment generated for video id=%d",
                             video.id,
                         )
                         continue
-                    if repo_v.update_summary(video.id, digest.summary):
+                    if repo_v.update_summary(video.id, output.summary):
                         vid_count += 1
+                    self._persist_enrichment(db, "youtube_video", video.id, output)
+                    self._reembed(db, "youtube_video", video.id, output.summary)
         except Exception as exc:
-            msg = f"DigestService: video summarisation failed — {exc}"
+            msg = f"DigestService: video enrichment failed — {exc}"
             logger.error(msg, exc_info=True)
             errors.append(msg)
 
         logger.info(
-            "DigestService: summarised %d articles, %d videos", art_count, vid_count
+            "DigestService: enriched %d articles, %d videos", art_count, vid_count
         )
         return art_count, vid_count, errors
+
+    def _persist_enrichment(
+        self, db, content_type: str, content_id: int, output: EnrichmentOutput,
+    ) -> None:
+        """Write ONE EnrichmentAgent call's result across the 3 M8 tables it touches."""
+        ContentEnrichmentRepository(db).upsert(
+            content_type=content_type,
+            content_id=content_id,
+            content_category=output.content_category,
+            technical_depth=output.technical_depth,
+            key_points=output.key_points,
+            technical_details=output.technical_details,
+            business_angle=output.business_angle,
+            why_it_matters=output.why_it_matters,
+            enrichment_version=self._enrichment_version,
+        )
+        ContentTopicRepository(db).replace_for_content(content_type, content_id, output.topics)
+        ContentEntityRepository(db).replace_for_content(
+            content_type, content_id, [(e.name, e.type) for e in output.entities],
+        )
+
+    def _reembed(self, db, content_type: str, content_id: int, summary: str) -> None:
+        """
+        Re-embed immediately after enrichment writes a new summary — without
+        this, run_embedding_phase()'s exists_for() short-circuit would never
+        re-embed this item, leaving clustering to work off a stale
+        raw-content/title embedding computed before enrichment ever ran
+        (M8 gap; Principle 9: keep derived artifacts current with the data
+        that produced them).
+        """
+        text = (summary or "").strip()
+        if not text:
+            return
+        try:
+            vector = embed_text(text)
+            EmbeddingRepository(db).upsert(content_type, content_id, vector)
+        except Exception:
+            logger.exception(
+                "DigestService: failed to re-embed %s:%s after enrichment", content_type, content_id,
+            )

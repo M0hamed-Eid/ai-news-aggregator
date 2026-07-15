@@ -19,9 +19,9 @@
 <div class="row row-cols-1 row-cols-md-3 g-4 mb-5">
   {% for item in featured %}
     {% if item.video_id %}
-      {% include "components/_video_card.html" with video=item is_saved=item.is_saved is_hidden=item.is_hidden only %}
+      {% include "components/_video_card.html" with video=item is_saved=item.is_saved is_hidden=item.is_hidden topics=item.topics only %}
     {% else %}
-      {% include "components/_article_card.html" with article=item featured=True is_saved=item.is_saved is_hidden=item.is_hidden only %}
+      {% include "components/_article_card.html" with article=item featured=True is_saved=item.is_saved is_hidden=item.is_hidden topics=item.topics only %}
     {% endif %}
   {% endfor %}
 </div>
@@ -32,10 +32,10 @@
 </div>
 
 <form method="get" class="row g-2 mb-4 app-card p-3">
-  <div class="col-md-4">
+  <div class="col-md-3">
     <input type="search" name="q" class="form-control" placeholder="Search articles &amp; videos…" value="{{ q }}">
   </div>
-  <div class="col-md-3">
+  <div class="col-md-2">
     <select name="category" class="form-select" onchange="this.form.submit()">
       <option value="">All categories</option>
       {% for key, label in categories %}
@@ -43,7 +43,7 @@
       {% endfor %}
     </select>
   </div>
-  <div class="col-md-3">
+  <div class="col-md-2">
     <select name="source" class="form-select" onchange="this.form.submit()">
       <option value="">All sources</option>
       {% for source in sources %}
@@ -52,11 +52,19 @@
     </select>
   </div>
   <div class="col-md-2">
+    <select name="topic" class="form-select" onchange="this.form.submit()">
+      <option value="">All topics</option>
+      {% for topic in topics %}
+        <option value="{{ topic.slug }}" {% if topic.slug == active_topic %}selected{% endif %}>{{ topic.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
     <input type="date" name="from" class="form-control" value="{{ date_from }}" onchange="this.form.submit()">
   </div>
   <div class="col-12 d-flex gap-2">
     <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-search"></i> Search</button>
-    {% if q or active_source or active_category or date_from %}
+    {% if q or active_source or active_category or active_topic or date_from %}
       <a href="{% url 'home' %}" class="btn btn-outline-secondary btn-sm">Clear filters</a>
     {% endif %}
   </div>
@@ -66,9 +74,9 @@
   <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
     {% for item in items %}
       {% if item.video_id %}
-        {% include "components/_video_card.html" with video=item is_saved=item.is_saved is_hidden=item.is_hidden only %}
+        {% include "components/_video_card.html" with video=item is_saved=item.is_saved is_hidden=item.is_hidden topics=item.topics only %}
       {% else %}
-        {% include "components/_article_card.html" with article=item is_saved=item.is_saved is_hidden=item.is_hidden only %}
+        {% include "components/_article_card.html" with article=item is_saved=item.is_saved is_hidden=item.is_hidden topics=item.topics only %}
       {% endif %}
     {% endfor %}
   </div>

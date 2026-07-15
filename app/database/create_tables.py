@@ -49,6 +49,8 @@ def create_all_tables() -> None:
     from app.database.models import (  # noqa: F401
         Article, YoutubeVideo, Embedding, Source, UserRanking, DigestLog,
         UserAffinity, DigestClickToken,
+        TaxonomyTopic, ContentTopic, Entity, ContentEntity,
+        ContentCluster, ContentClusterMember, ContentEnrichment, ContentScore,
     )
 
     # Step 3: create tables

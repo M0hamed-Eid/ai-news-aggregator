@@ -305,3 +305,182 @@ class DigestLog(ReadOnly, models.Model):
 
     def __str__(self):
         return f"Digest sent to user_id={self.user_id} at {self.sent_at}"
+
+
+# =============================================================================
+# M8 — Content Intelligence Layer mirrors (app/database/models/{taxonomy_topic,
+# content_topic,entity,content_entity,content_cluster,content_cluster_member,
+# content_enrichment,content_score}.py). Same managed=False + ReadOnly pattern.
+# =============================================================================
+
+class TaxonomyTopic(ReadOnly, models.Model):
+    """Controlled topic vocabulary (table: taxonomy_topics). Django's own
+    onboarding.Interest FKs to this (by slug match) so user interests and
+    content topics share ONE vocabulary — see Interest.taxonomy_topic."""
+
+    id = models.BigAutoField(primary_key=True)
+    slug = models.SlugField(unique=True)
+    name = models.CharField(max_length=200)
+    category = models.CharField(max_length=50, null=True, blank=True)
+    sort_order = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        managed = False
+        db_table = "taxonomy_topics"
+        ordering = ["sort_order", "name"]
+        verbose_name = "taxonomy topic"
+        verbose_name_plural = "taxonomy topics"
+
+    def __str__(self):
+        return self.name
+
+
+class ContentTopic(ReadOnly, models.Model):
+    """Which taxonomy_topics a content item was tagged with (table: content_topics)."""
+
+    id = models.BigAutoField(primary_key=True)
+    content_type = models.CharField(max_length=20)
+    content_id = models.BigIntegerField()
+    taxonomy_topic = models.ForeignKey(
+        TaxonomyTopic, db_constraint=False, on_delete=models.DO_NOTHING, related_name="content_topics",
+    )
+    confidence = models.FloatField(null=True, blank=True)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "content_topics"
+        verbose_name = "content topic"
+        verbose_name_plural = "content topics"
+
+    def __str__(self):
+        return f"{self.content_type}:{self.content_id} -> {self.taxonomy_topic_id}"
+
+
+class Entity(ReadOnly, models.Model):
+    """Deduplicated named entity — company/model/person/technology (table: entities)."""
+
+    id = models.BigAutoField(primary_key=True)
+    name = models.CharField(max_length=200)
+    entity_type = models.CharField(max_length=20)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "entities"
+        verbose_name = "entity"
+        verbose_name_plural = "entities"
+
+    def __str__(self):
+        return f"{self.name} ({self.entity_type})"
+
+
+class ContentEntity(ReadOnly, models.Model):
+    """Which entities were mentioned in a content item (table: content_entities)."""
+
+    id = models.BigAutoField(primary_key=True)
+    content_type = models.CharField(max_length=20)
+    content_id = models.BigIntegerField()
+    entity = models.ForeignKey(
+        Entity, db_constraint=False, on_delete=models.DO_NOTHING, related_name="content_mentions",
+    )
+    mention_context = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "content_entities"
+        verbose_name = "content entity"
+        verbose_name_plural = "content entities"
+
+    def __str__(self):
+        return f"{self.content_type}:{self.content_id} -> {self.entity_id}"
+
+
+class ContentCluster(ReadOnly, models.Model):
+    """A cluster identity/bucket — actual grouping lives in ContentClusterMember (table: content_clusters)."""
+
+    id = models.BigAutoField(primary_key=True)
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "content_clusters"
+        verbose_name = "content cluster"
+        verbose_name_plural = "content clusters"
+
+    def __str__(self):
+        return f"Cluster {self.id}"
+
+
+class ContentClusterMember(ReadOnly, models.Model):
+    """One item's membership in a cluster (table: content_cluster_members)."""
+
+    id = models.BigAutoField(primary_key=True)
+    content_type = models.CharField(max_length=20)
+    content_id = models.BigIntegerField()
+    cluster = models.ForeignKey(
+        ContentCluster, db_constraint=False, on_delete=models.DO_NOTHING, related_name="members",
+    )
+    similarity_to_centroid = models.FloatField(null=True, blank=True)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "content_cluster_members"
+        verbose_name = "content cluster member"
+        verbose_name_plural = "content cluster members"
+
+    def __str__(self):
+        return f"{self.content_type}:{self.content_id} in cluster {self.cluster_id}"
+
+
+class ContentEnrichment(ReadOnly, models.Model):
+    """Structured enrichment output from EnrichmentAgent's single LLM call
+    per item (table: content_enrichment) — content_category, technical_depth,
+    structured summary fields, why_it_matters."""
+
+    id = models.BigAutoField(primary_key=True)
+    content_type = models.CharField(max_length=20)
+    content_id = models.BigIntegerField()
+    content_category = models.CharField(max_length=30)
+    technical_depth = models.IntegerField()
+    key_points = models.JSONField(default=list)
+    technical_details = models.TextField(blank=True, default="")
+    business_angle = models.TextField(blank=True, default="")
+    why_it_matters = models.TextField(blank=True, default="")
+    enrichment_version = models.CharField(max_length=50)
+    enriched_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "content_enrichment"
+        verbose_name = "content enrichment"
+        verbose_name_plural = "content enrichment"
+
+    def __str__(self):
+        return f"{self.content_type}:{self.content_id} category={self.content_category}"
+
+
+class ContentScore(ReadOnly, models.Model):
+    """Quality score v1 + logged feature-vector snapshot (table: content_scores)."""
+
+    id = models.BigAutoField(primary_key=True)
+    content_type = models.CharField(max_length=20)
+    content_id = models.BigIntegerField()
+    score = models.FloatField()
+    score_version = models.CharField(max_length=50)
+    features = models.JSONField(default=dict)
+    computed_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "content_scores"
+        ordering = ["-score"]
+        verbose_name = "content score"
+        verbose_name_plural = "content scores"
+
+    def __str__(self):
+        return f"{self.content_type}:{self.content_id} score={self.score:.3f}"

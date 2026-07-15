@@ -5,6 +5,7 @@ Reusable YouTube video card. Expects:
   reasoning — optional str, "Recommended because..." (Feed page)
   is_saved  — optional bool, initial Save-button state (default False)
   is_hidden — optional bool, initial Hide-button state (default False)
+  topics    — optional list of catalog.TaxonomyTopic (M8)
 {% endcomment %}
 <div class="col">
   <div class="app-card h-100 d-flex flex-column" data-content-type="youtube_video" data-content-id="{{ video.pk }}">
@@ -27,6 +28,11 @@ Reusable YouTube video card. Expects:
       {% endif %}
       {% if reasoning %}
         <p class="app-recommend-box small mb-2"><i class="bi bi-lightbulb me-1"></i>{{ reasoning|truncatewords:22 }}</p>
+      {% endif %}
+      {% if topics %}
+        <div class="mb-2">
+          {% for topic in topics %}<span class="badge badge-topic">{{ topic.name }}</span>{% endfor %}
+        </div>
       {% endif %}
       <div class="d-flex align-items-center gap-2 mt-auto">
         <a href="{% url 'news:video_detail' video.pk %}" class="btn btn-outline-primary btn-sm">

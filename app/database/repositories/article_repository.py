@@ -176,6 +176,27 @@ class ArticleRepository(BaseRepository[Article]):
             .all()
         )
 
+    def get_unenriched(self, limit: int = 20) -> List[Article]:
+        """
+        Return articles with no content_enrichment row yet (M8). NOT the
+        same check as get_unsummarised()'s `summary IS NULL` — every pre-M8
+        article already has summary IS NOT NULL but zero content_enrichment
+        rows, so that old check would silently skip 100% of the backfill
+        corpus forever. This checks actual enrichment-table existence.
+        """
+        from app.database.models.content_enrichment import ContentEnrichment
+
+        enriched_ids = self.db.query(ContentEnrichment.content_id).filter(
+            ContentEnrichment.content_type == "article"
+        )
+        return (
+            self.db.query(Article)
+            .filter(~Article.id.in_(enriched_ids))
+            .order_by(Article.published_at.desc())
+            .limit(limit)
+            .all()
+        )
+
     def get_recent(self, hours: int = 24, limit: int = 100) -> List[Article]:
         """Return articles published in the last N hours."""
         from datetime import timedelta

@@ -3,7 +3,7 @@
 # Main entry point for the full data pipeline.
 #
 # Phase 1 — scrape YouTube + blogs + Source-Registry-driven sources → insert into PostgreSQL
-# Phase 2 — generate AI summaries (DigestAgent) for unsummarised records
+# Phase 2 — enrich content (EnrichmentAgent: summary + M8 structured fields) for unenriched records
 # Phase 3 — rank content (CuratorAgent) + build + send email (EmailAgent)
 #
 # Usage:
@@ -108,6 +108,12 @@ class PipelineResult:
     digest_total_ranked:        int = 0
     digest_errors: List[str] = field(default_factory=list)
 
+    clustering_clusters: int = 0
+    clustering_items:    int = 0
+
+    scoring_scored: int = 0
+    scoring_errors: int = 0
+
     def print_summary(self) -> None:
         logger.info("=" * 60)
         logger.info("PIPELINE SUMMARY")
@@ -139,6 +145,16 @@ class PipelineResult:
         if self.digest_errors:
             for err in self.digest_errors:
                 logger.warning("  Digest error: %s", err)
+        if self.clustering_clusters or self.clustering_items:
+            logger.info(
+                "  Clusters : %4d cluster(s)  %4d item(s) clustered",
+                self.clustering_clusters, self.clustering_items,
+            )
+        if self.scoring_scored or self.scoring_errors:
+            logger.info(
+                "  Scoring  : scored=%4d  errors=%4d",
+                self.scoring_scored, self.scoring_errors,
+            )
         logger.info("=" * 60)
 
 
@@ -454,6 +470,189 @@ def run_embedding_phase(result: PipelineResult) -> None:
 
     logger.info(f"[Embeddings] Done. embedded={embedded} errors={errors}")
 
+
+def run_clustering_phase(result: PipelineResult) -> None:
+    """
+    Rebuilds content_clusters/content_cluster_members WHOLESALE (M8):
+    Union-Find over a pgvector k-NN graph. For every embedded item, pull its
+    nearest neighbors via EmbeddingRepository.find_similar() (cross-source —
+    content_type=None — since dedup/Related must span sources), keep edges
+    above SIMILARITY_THRESHOLD, then union connected items into the same
+    component. This is single-linkage agglomerative clustering restricted
+    to a k-NN graph — the standard, efficient way to do "agglomerative over
+    pgvector neighbors" (the roadmap's own wording) without an O(n^2) full
+    pairwise distance matrix, and needs no new dependency (stdlib Union-Find,
+    order-independent, ~20 lines).
+
+    Wholesale replace every run — clustering is a global, non-user
+    computation (Principle 1: ingest once, never per-user), and at this
+    corpus's current scale (~6-8k items) a full rebuild is seconds-to-low-
+    minutes of work — same "replace, don't accumulate" convention as
+    UserRanking/UserAffinity. Revisit only if corpus size grows an order of
+    magnitude.
+    """
+    from app.database import get_db_session
+    from app.database.models.article import Article
+    from app.database.models.embedding import Embedding
+    from app.database.repositories.embedding_repository import EmbeddingRepository
+    from app.database.repositories.content_cluster_repository import ContentClusterRepository
+
+    # 0.85 was tried first and produced a real single-linkage chaining
+    # failure live: a 60-item "mega-cluster" of unrelated Hugging Face model
+    # uploads, bridged transitively through a few genuinely-high-similarity
+    # pairs (~0.95) even though most pairs in the cluster were only ~0.55-0.69
+    # similar. 0.92 still left a smaller but real mega-cluster of the SAME
+    # source. Root cause (confirmed live, not guessed): huggingface_model
+    # articles/summaries are heavily templated ("A new model has been
+    # published on the Hugging Face Hub, offering...") — the boilerplate
+    # phrasing dominates the embedding, so unrelated model uploads collide
+    # in embedding space regardless of actual content difference. Same class
+    # of known low-signal noise as this source's ingest-time issue (see
+    # .wolf/cerebrum.md: "HF's createdAt sort being mostly noise"). Excluded
+    # from cross-source STORY clustering entirely — clustering exists to
+    # dedup the same real-world story covered by multiple outlets, not to
+    # group generically-similar catalog entries from one firehose source.
+    EXCLUDED_ARTICLE_SOURCES = {"huggingface_model"}
+
+    SIMILARITY_THRESHOLD = 0.92
+    NEIGHBORS_PER_ITEM = 8
+    MAX_ITEMS = 20_000  # generous headroom above current corpus size (~6-8k)
+
+    logger.info("[Clustering] Starting clustering phase")
+
+    with get_db_session() as db:
+        emb_repo = EmbeddingRepository(db)
+
+        excluded_article_ids = {
+            aid for (aid,) in db.query(Article.id).filter(Article.source.in_(EXCLUDED_ARTICLE_SOURCES))
+        }
+        all_embeddings = [
+            e for e in db.query(Embedding).limit(MAX_ITEMS).all()
+            if not (e.content_type == "article" and e.content_id in excluded_article_ids)
+        ]
+        items = [(e.content_type, e.content_id) for e in all_embeddings]
+        index = {key: i for i, key in enumerate(items)}
+        parent = list(range(len(items)))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]  # path compression
+                x = parent[x]
+            return x
+
+        def union(x: int, y: int) -> None:
+            rx, ry = find(x), find(y)
+            if rx != ry:
+                parent[ry] = rx
+
+        for i, embedding_row in enumerate(all_embeddings):
+            neighbors = emb_repo.find_similar(
+                embedding_row.embedding, content_type=None, limit=NEIGHBORS_PER_ITEM + 1,
+            )
+            for neighbor_row, similarity in neighbors:
+                key = (neighbor_row.content_type, neighbor_row.content_id)
+                if key == items[i] or similarity < SIMILARITY_THRESHOLD:
+                    continue
+                j = index.get(key)
+                if j is not None:
+                    union(i, j)
+
+        groups: dict = {}
+        for i, key in enumerate(items):
+            groups.setdefault(find(i), []).append(key)
+
+        clusters = list(groups.values())
+        total_members = ContentClusterRepository(db).replace_all(clusters)
+
+    multi_item_clusters = sum(1 for c in clusters if len(c) >= 2)
+    logger.info(
+        "[Clustering] Done. %d item(s) embedded, %d cluster(s) with 2+ members, %d item(s) clustered",
+        len(items), multi_item_clusters, total_members,
+    )
+    result.clustering_clusters = multi_item_clusters
+    result.clustering_items = total_members
+
+
+def run_scoring_phase(result: PipelineResult) -> None:
+    """
+    Quality score v1 (heuristic) + a snapshot of the exact feature vector
+    that produced it (M8, Principle 7: "log features now so they become
+    future ML training data"). Weights here are a documented, adjustable
+    starting point, not a tuned model — the point of content_scores.features
+    is capturing the INPUTS for future ML training, not the formula being
+    "correct" yet. `popularity` is reserved (None) — the [Nice-to-have]
+    popularity re-fetch job hasn't shipped this milestone.
+    """
+    import math
+    from datetime import datetime, timezone
+
+    from app.database import get_db_session
+    from app.database.repositories.article_repository import ArticleRepository
+    from app.database.repositories.youtube_repository import YoutubeRepository
+    from app.database.repositories.content_enrichment_repository import ContentEnrichmentRepository
+    from app.database.repositories.content_entity_repository import ContentEntityRepository
+    from app.database.repositories.content_topic_repository import ContentTopicRepository
+    from app.database.repositories.content_score_repository import ContentScoreRepository
+    from app.database.models.content_enrichment import ContentEnrichment
+    from app.database.models.content_entity import ContentEntity
+    from app.database.models.content_topic import ContentTopic
+
+    SCORE_VERSION = "v1"
+    MAX_ITEMS = 20_000  # same generous headroom as run_clustering_phase
+
+    logger.info("[Scoring] Starting quality-scoring phase")
+    scored = errors = 0
+
+    with get_db_session() as db:
+        score_repo = ContentScoreRepository(db)
+
+        for content_type, repo_cls in (("article", ArticleRepository), ("youtube_video", YoutubeRepository)):
+            for item in repo_cls(db).get_all(limit=MAX_ITEMS):
+                try:
+                    enrichment = (
+                        db.query(ContentEnrichment)
+                        .filter_by(content_type=content_type, content_id=item.id)
+                        .first()
+                    )
+                    content_length = len(item.content or "")
+                    length_score = min(1.0, math.log1p(content_length) / math.log1p(5000))
+                    entity_count = (
+                        db.query(ContentEntity).filter_by(content_type=content_type, content_id=item.id).count()
+                    )
+                    topic_count = (
+                        db.query(ContentTopic).filter_by(content_type=content_type, content_id=item.id).count()
+                    )
+                    age_days = (datetime.now(timezone.utc) - item.published_at).total_seconds() / 86400.0
+                    freshness = math.exp(-max(age_days, 0.0) / 14.0)
+
+                    features = {
+                        "has_enrichment": enrichment is not None,
+                        "content_length_score": round(length_score, 4),
+                        "entity_count": entity_count,
+                        "topic_count": topic_count,
+                        "freshness": round(freshness, 4),
+                        "technical_depth": enrichment.technical_depth if enrichment else None,
+                        "popularity": None,
+                    }
+                    score = (
+                        0.30 * (1.0 if enrichment is not None else 0.0)
+                        + 0.20 * length_score
+                        + 0.15 * min(1.0, entity_count / 5.0)
+                        + 0.15 * min(1.0, topic_count / 3.0)
+                        + 0.20 * freshness
+                    )
+
+                    score_repo.upsert(content_type, item.id, score, SCORE_VERSION, features)
+                    scored += 1
+                except Exception:
+                    logger.exception(f"[Scoring] Failed on {content_type} id={item.id}")
+                    errors += 1
+
+    logger.info(f"[Scoring] Done. scored={scored} errors={errors}")
+    result.scoring_scored = scored
+    result.scoring_errors = errors
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Phase 2+3 runner — digest + email
 # ─────────────────────────────────────────────────────────────────────────────
@@ -691,12 +890,25 @@ Examples:
         logger.info("[Embedding] Skipped (dry-run mode)")
 
     # ── Step 3: digest + email (Phase 2+3) ───────────────────────────────
+    # Enrichment (M8: summary + content_category/topics/entities/etc, one
+    # LLM call per item) happens INSIDE DigestService.run() as its own Step 1
+    # — see app/services/digest_service.py::_enrich_unenriched().
     if args.skip_digest:
         logger.info("[Digest] Skipped (--skip-digest)")
     elif args.dry_run:
         logger.info("[Digest] Skipped (--dry-run implies no digest phase)")
     else:
         run_digest_phase(args.hours, args.dry_run, args.skip_email, result)
+
+    # ── Step 3.5: clustering + quality scoring (M8) ───────────────────────
+    # Run AFTER digest/enrichment so clustering works off the freshest
+    # (post-enrichment) embeddings, and scoring can read the enrichment/
+    # topics/entities this same run may have just produced.
+    if not args.dry_run:
+        run_clustering_phase(result)
+        run_scoring_phase(result)
+    else:
+        logger.info("[Clustering/Scoring] Skipped (dry-run mode)")
 
     # ── Step 4: print summary ─────────────────────────────────────────────
     result.print_summary()
@@ -705,6 +917,7 @@ Examples:
         result.youtube_errors
         + result.articles_errors
         + len(result.digest_errors)
+        + result.scoring_errors
     )
     if total_errors > 0:
         logger.warning("Pipeline completed with %d error(s)", total_errors)

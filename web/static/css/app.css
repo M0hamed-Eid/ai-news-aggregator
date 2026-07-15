@@ -204,7 +204,8 @@ a {
 /* ---------------------------------------------------------------------- */
 
 .badge-source,
-.badge-category {
+.badge-category,
+.badge-topic {
   padding: 0.4em 0.7em;
   font-weight: 600;
   font-size: 0.75rem;
@@ -220,6 +221,17 @@ a {
   background-color: #f1f5f9;
   color: #334155;
   border: 1px solid #e2e8f0;
+}
+
+/* Topic tags (M8) — distinct from source/category badges, shown as a small
+   pill row on cards and detail pages. */
+.badge-topic {
+  display: inline-block;
+  background-color: #ecfdf5;
+  color: #047857;
+  border: 1px solid #d1fae5;
+  border-radius: 999px;
+  margin: 0 0.25rem 0.25rem 0;
 }
 
 .rank-badge {

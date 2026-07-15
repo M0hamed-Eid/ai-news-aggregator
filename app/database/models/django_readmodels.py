@@ -63,6 +63,10 @@ class DjangoInterest(DjangoBase):
     slug: Mapped[str] = mapped_column(String(50))
     name: Mapped[str] = mapped_column(String(200))
     category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    taxonomy_topic_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, nullable=True,
+        comment="M8: links to app/database/models/taxonomy_topic.py's TaxonomyTopic.id (same DB, pipeline-owned — matched by slug in a Django data migration, not a real cross-ORM FK)",
+    )
 
 
 class DjangoUserProfile(DjangoBase):

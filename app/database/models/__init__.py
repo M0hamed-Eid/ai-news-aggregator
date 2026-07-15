@@ -16,8 +16,18 @@ from app.database.models.user_ranking import UserRanking
 from app.database.models.digest_log import DigestLog
 from app.database.models.user_affinity import UserAffinity
 from app.database.models.digest_click_token import DigestClickToken
+from app.database.models.taxonomy_topic import TaxonomyTopic
+from app.database.models.content_topic import ContentTopic
+from app.database.models.entity import Entity
+from app.database.models.content_entity import ContentEntity
+from app.database.models.content_cluster import ContentCluster
+from app.database.models.content_cluster_member import ContentClusterMember
+from app.database.models.content_enrichment import ContentEnrichment
+from app.database.models.content_score import ContentScore
 
 __all__ = [
     "Article", "YoutubeVideo", "Embedding", "Source", "UserRanking", "DigestLog",
     "UserAffinity", "DigestClickToken",
+    "TaxonomyTopic", "ContentTopic", "Entity", "ContentEntity",
+    "ContentCluster", "ContentClusterMember", "ContentEnrichment", "ContentScore",
 ]
