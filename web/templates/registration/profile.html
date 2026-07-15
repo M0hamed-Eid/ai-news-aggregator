@@ -41,6 +41,46 @@
             <input class="form-check-input" type="checkbox" id="is_paused" name="is_paused" {% if digest_settings.is_paused %}checked{% endif %}>
             <label class="form-check-label" for="is_paused">Pause my digest emails (I'll still see everything in My Feed)</label>
           </div>
+
+          <div class="col-12">
+            <hr class="my-2">
+            <h2 class="h6 text-uppercase text-muted mb-1">Ranking preferences</h2>
+            <p class="form-text mt-0 mb-3">These directly shape how My Feed and your digest are ranked — not just display settings.</p>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label" for="expertise_level">Technical level</label>
+            <select class="form-select" id="expertise_level" name="expertise_level">
+              <option value="beginner" {% if digest_settings.expertise_level == "beginner" %}selected{% endif %}>Beginner — lighter, more introductory content</option>
+              <option value="intermediate" {% if digest_settings.expertise_level == "intermediate" %}selected{% endif %}>Intermediate — a mix of depth</option>
+              <option value="advanced" {% if digest_settings.expertise_level == "advanced" %}selected{% endif %}>Advanced — deep technical content</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="max_items">Items per feed refresh</label>
+            <input type="number" class="form-control" id="max_items" name="max_items" min="5" max="50" value="{{ digest_settings.max_items }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label" for="format_balance">Article vs. video mix</label>
+            <select class="form-select" id="format_balance" name="format_balance">
+              <option value="balanced" {% if digest_settings.format_balance == "balanced" %}selected{% endif %}>Balanced</option>
+              <option value="articles" {% if digest_settings.format_balance == "articles" %}selected{% endif %}>Prefer articles</option>
+              <option value="videos" {% if digest_settings.format_balance == "videos" %}selected{% endif %}>Prefer videos</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label" for="topic_lean">Research vs. industry lean</label>
+            <select class="form-select" id="topic_lean" name="topic_lean">
+              <option value="balanced" {% if digest_settings.topic_lean == "balanced" %}selected{% endif %}>Balanced</option>
+              <option value="research" {% if digest_settings.topic_lean == "research" %}selected{% endif %}>Research-leaning</option>
+              <option value="industry" {% if digest_settings.topic_lean == "industry" %}selected{% endif %}>Industry-leaning</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label" for="reading_time_budget_minutes">Reading-time budget (minutes)</label>
+            <input type="number" class="form-control" id="reading_time_budget_minutes" name="reading_time_budget_minutes" min="1" max="120" placeholder="No limit" value="{{ digest_settings.reading_time_budget_minutes|default_if_none:'' }}">
+            <div class="form-text">Items well over this get gently deprioritized — never excluded outright.</div>
+          </div>
         </div>
         <button type="submit" class="btn btn-primary mt-4"><i class="bi bi-check2"></i> Save changes</button>
       </form>

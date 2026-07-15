@@ -234,6 +234,21 @@ a {
   margin: 0 0.25rem 0.25rem 0;
 }
 
+/* Follow/unfollow chip buttons (M9) — topic/entity badges on detail pages
+   become real <button> elements so they're clickable, but should look
+   identical to the plain <span> badges they replace; this just strips the
+   native button chrome so the existing badge-* background/border/color
+   rules are the only thing that shows. */
+.btn-follow-chip {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.btn-follow-chip:hover {
+  filter: brightness(0.95);
+}
+
 .rank-badge {
   display: inline-flex;
   align-items: center;

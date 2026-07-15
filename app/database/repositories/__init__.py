@@ -15,6 +15,7 @@ from app.database.repositories.content_entity_repository import ContentEntityRep
 from app.database.repositories.content_cluster_repository import ContentClusterRepository
 from app.database.repositories.content_enrichment_repository import ContentEnrichmentRepository
 from app.database.repositories.content_score_repository import ContentScoreRepository
+from app.database.repositories.user_profile_vector_repository import UserProfileVectorRepository
 
 __all__ = [
     "ArticleRepository", "YoutubeRepository", "EmbeddingRepository",
@@ -23,4 +24,5 @@ __all__ = [
     "TaxonomyTopicRepository", "ContentTopicRepository", "EntityRepository",
     "ContentEntityRepository", "ContentClusterRepository",
     "ContentEnrichmentRepository", "ContentScoreRepository",
+    "UserProfileVectorRepository",
 ]

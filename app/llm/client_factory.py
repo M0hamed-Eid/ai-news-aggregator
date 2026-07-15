@@ -1,15 +1,20 @@
 # app/llm/client_factory.py
 #
 # Single place that decides which LLM backend each agent talks to.
-# Before this, every agent (DigestAgent [now EnrichmentAgent], CuratorAgent,
-# EmailAgent) built its own Groq(api_key=...) client directly — meaning
-# "switch to local" meant editing 3 files. Now it's one env var.
+# Before this, every agent (DigestAgent [now EnrichmentAgent], CuratorAgent
+# [deleted in M9 — ranking is now app.services.ranking_service, no LLM in
+# the ranking path], EmailAgent) built its own Groq(api_key=...) client
+# directly — meaning "switch to local" meant editing 3 files. Now it's one
+# env var.
 #
 # task="simple"    -> EnrichmentAgent, EmailAgent (summaries, intros)
 #                      can run locally via Ollama.
-# task="reasoning" -> CuratorAgent (ranking) stays on Groq's 70B model —
-#                      a 70B-class model doesn't fit a 16GB GPU without
-#                      quality/speed tradeoffs that aren't worth it yet.
+# task="reasoning" -> the 70B-class tier CuratorAgent used to use for
+#                      ranking. Unused as of M9 (nothing calls this tier
+#                      today) but kept defined — a future agent needing
+#                      stronger reasoning (e.g. M11's grounded trend
+#                      narrative) can reuse it rather than re-deriving a
+#                      routing scheme.
 
 import os
 

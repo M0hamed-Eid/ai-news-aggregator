@@ -11,11 +11,12 @@ from django.views.generic import TemplateView
 
 from apps.catalog.models import Article, DigestClickToken, YoutubeVideo
 
-from .models import CONTENT_TYPE_CHOICES, SavedItem, UserEvent
+from .models import CONTENT_TYPE_CHOICES, SavedItem, UserEvent, UserFollow
 from .ratelimit import check_rate_limit, is_first_party
 
 VALID_CONTENT_TYPES = {code for code, _ in CONTENT_TYPE_CHOICES}
 VALID_EVENT_TYPES = {code for code, _ in UserEvent.EVENT_TYPE_CHOICES}
+VALID_FOLLOW_TARGET_TYPES = {code for code, _ in UserFollow.TARGET_TYPE_CHOICES}
 MAX_EVENTS_PER_BATCH = 50
 RATE_LIMIT_PER_MINUTE = 60
 
@@ -125,6 +126,40 @@ class HideToggleView(_ToggleView):
     field_name = "is_hidden"
     timestamp_field = "hidden_at"
     event_type = "hide"
+
+
+class FollowToggleView(LoginRequiredMixin, View):
+    """
+    POST /behavior/follow/ — {"target_type": "entity"|"topic"|"source", "target_key": "..."}
+
+    Toggles a UserFollow row and returns {"following": bool} — same
+    request/response shape as Save/Hide (_ToggleView above), but keyed by
+    (target_type, target_key) instead of (content_type, content_id) since
+    follow targets are pipeline-owned lookup rows (entities/topics/sources),
+    not polymorphic content items, so a plain delete-or-create toggle is
+    simpler here than _ToggleView's boolean-field-on-a-state-row shape.
+    """
+
+    def post(self, request, *args, **kwargs):
+        try:
+            payload = json.loads(request.body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JsonResponse({"error": "invalid JSON"}, status=400)
+
+        target_type = payload.get("target_type")
+        target_key = payload.get("target_key")
+        if target_type not in VALID_FOLLOW_TARGET_TYPES or not target_key:
+            return JsonResponse({"error": "target_type/target_key required"}, status=400)
+        target_key = str(target_key)[:200]
+
+        deleted, _ = UserFollow.objects.filter(
+            user=request.user, target_type=target_type, target_key=target_key,
+        ).delete()
+        if deleted:
+            return JsonResponse({"following": False})
+
+        UserFollow.objects.create(user=request.user, target_type=target_type, target_key=target_key)
+        return JsonResponse({"following": True})
 
 
 class DigestRedirectView(View):

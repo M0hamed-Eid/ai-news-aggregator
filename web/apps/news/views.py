@@ -5,25 +5,28 @@ Two content types share the same browsing UX:
   * Article       (table: articles)
   * YoutubeVideo  (table: youtube_videos)
 
-No models of its own. Search is a simple case-insensitive match for now;
-Postgres full-text search is a Phase 2 improvement.
+No models of its own. Home/Feed/News-list search is a simple case-insensitive
+`icontains` match. SearchView (M9) is the exception — real pgvector semantic
+search, with a keyword-search fallback (see apps.news.search.semantic_search).
 
 HomeView and FeedView also live here (not a separate app) — same domain
 (browsing catalog content), just two different entry points: Home is the
 public, unpersonalized "what's happening" page; Feed is the login-gated,
 personalized one. Both are wired at the project root in config/urls.py
 (alongside the pre-existing `home` route), not under this app's own
-`news:` namespace.
+`news:` namespace. SearchView is wired the same way.
 """
 from datetime import datetime
 
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db.models import Q
-from django.views.generic import DetailView, ListView
+from django.views.generic import DetailView, ListView, TemplateView
 
-from apps.behavior.services import attach_saved_state, mark_read
+from apps.behavior.services import attach_saved_state, get_followed_keys, mark_read
 from apps.catalog.models import Article, ContentTopic, Source, TaxonomyTopic, UserRanking, YoutubeVideo
 from apps.catalog.services import attach_topics, get_enrichment, get_entities, get_related_items
+from apps.news.search import semantic_search
+from django.core.paginator import Paginator
 
 
 class ArticleListView(LoginRequiredMixin, ListView):
@@ -87,6 +90,8 @@ class ArticleDetailView(LoginRequiredMixin, DetailView):
         enrichment = get_enrichment("article", self.object.pk)
         ctx["enrichment"] = enrichment
         ctx["entities"] = get_entities("article", self.object.pk)
+        ctx["followed_topics"] = get_followed_keys(self.request.user, "topic")
+        ctx["followed_entities"] = get_followed_keys(self.request.user, "entity")
 
         mark_read(self.request.user, "article", self.object.pk)
         return ctx
@@ -139,13 +144,15 @@ class VideoDetailView(LoginRequiredMixin, DetailView):
         enrichment = get_enrichment("youtube_video", self.object.pk)
         ctx["enrichment"] = enrichment
         ctx["entities"] = get_entities("youtube_video", self.object.pk)
+        ctx["followed_topics"] = get_followed_keys(self.request.user, "topic")
+        ctx["followed_entities"] = get_followed_keys(self.request.user, "entity")
 
         mark_read(self.request.user, "youtube_video", self.object.pk)
         return ctx
 
 
 def _recommendation_reasoning(user, content_type, content_id):
-    """CuratorAgent's own stated reasoning for this user+item, if a ranking exists — not synthesized."""
+    """RankingService's templated explanation for this user+item, if a ranking exists — not synthesized here."""
     if not user.is_authenticated:
         return None
     ranking = UserRanking.objects.filter(
@@ -242,14 +249,15 @@ class HomeView(ListView):
 
 class FeedView(LoginRequiredMixin, ListView):
     """
-    Personalized — reads the persisted output of CuratorAgent's ranking pass
-    (catalog.UserRanking, written by app/services/digest_service.py). Django
-    never ranks anything itself; it only reads what the batch pipeline
-    already computed for THIS user's last digest run.
+    Personalized — reads the persisted output of RankingService's two-stage
+    ranker (catalog.UserRanking, written by app/tasks/ranking_tasks.py on
+    its own schedule — M9, no LLM involved). Django never ranks anything
+    itself; it only reads what the pipeline already computed.
 
-    Fallback for users with no ranking yet (never had a digest run): plain
-    date-ordered content with their own exclusions applied — an honest empty
-    state, not fake personalization.
+    Fallback for users with no ranking yet (brand new, before the scheduled
+    ranking task has fired even once): plain date-ordered content with
+    their own exclusions applied — an honest empty state, not fake
+    personalization.
     """
 
     template_name = "feed.html"
@@ -289,6 +297,41 @@ class FeedView(LoginRequiredMixin, ListView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["has_ranking"] = self._has_ranking
+        attach_saved_state(self.request.user, ctx["items"])
+        attach_topics(ctx["items"])
+        return ctx
+
+
+class SearchView(TemplateView):
+    """
+    Public, not personalized (matches Home's access level) — a query box
+    over semantic_search() (M9). Plain TemplateView + manual Paginator
+    rather than ListView, since semantic_search() returns an already-built
+    plain list, not a queryset (same "Paginator works fine over a plain
+    list" pattern HomeView/FeedView already established for mixed
+    Article+YoutubeVideo result sets).
+    """
+
+    template_name = "search.html"
+    paginate_by = 12
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        query = self.request.GET.get("q", "").strip()
+        ctx["q"] = query
+
+        if query:
+            results, used_semantic = semantic_search(query, limit=60)
+            ctx["used_semantic"] = used_semantic
+        else:
+            results, ctx["used_semantic"] = [], True
+
+        paginator = Paginator(results, self.paginate_by)
+        page_obj = paginator.get_page(self.request.GET.get("page"))
+        ctx["page_obj"] = page_obj
+        ctx["items"] = list(page_obj.object_list)
+        ctx["is_paginated"] = page_obj.has_other_pages()
+
         attach_saved_state(self.request.user, ctx["items"])
         attach_topics(ctx["items"])
         return ctx

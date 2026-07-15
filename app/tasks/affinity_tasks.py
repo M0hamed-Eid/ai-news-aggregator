@@ -7,10 +7,17 @@
 # Django-owned table itself (see django_readmodels.py's DjangoUserEvent
 # docstring, and Architecture Principle 3 in docs/ROADMAP.md).
 #
-# Scoping (M7): only dimension="source" is computed. "topic"/"entity"
-# affinities have no data to aggregate until M8 ships taxonomy/entity
-# extraction — the schema already supports them, this job just has nothing
+# Scoping (M7): only dimension="source" was computed. "topic"/"entity"
+# affinities had no data to aggregate until M8 shipped taxonomy/entity
+# extraction — the schema already supported them, the job just had nothing
 # to write for them yet.
+#
+# M9: now populates all three dimensions. An event's weight*decay is
+# attributed to its source key (unchanged) AND fanned out to every topic/
+# entity tagged on that content item (an item can have several of each —
+# unlike source, which is exactly one per item). This is the "learned source
+# affinity" + "interest/topic match" input the M9 ranker's scoring stage
+# reads (app/services/ranking_service.py).
 
 import logging
 import math
@@ -21,9 +28,14 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 from pathlib import Path
 from typing import Dict
 
+from sqlalchemy import tuple_
+
 from app.celery_app import celery_app
 from app.database.models.article import Article
+from app.database.models.content_entity import ContentEntity
+from app.database.models.content_topic import ContentTopic
 from app.database.models.django_readmodels import DjangoUser, DjangoUserEvent
+from app.database.models.taxonomy_topic import TaxonomyTopic
 from app.database.repositories.user_affinity_repository import UserAffinityRepository
 from app.database.session import get_db_session
 
@@ -87,28 +99,72 @@ def aggregate_affinities_task() -> dict:
             for article_id, source in db.query(Article.id, Article.source).filter(Article.id.in_(article_ids)):
                 article_sources[article_id] = source
 
-        weights: Dict[int, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        # Bulk-fetch topic/entity tags for every distinct content item these
+        # events touch — one query each, not one per event. tuple_() gives a
+        # row-value IN() over the (content_type, content_id) composite key.
+        content_keys = {(e.content_type, e.content_id) for e in events}
+        topics_by_content: Dict[tuple, list] = defaultdict(list)
+        entities_by_content: Dict[tuple, list] = defaultdict(list)
+        if content_keys:
+            topic_rows = (
+                db.query(ContentTopic.content_type, ContentTopic.content_id, TaxonomyTopic.slug)
+                .join(TaxonomyTopic, ContentTopic.taxonomy_topic_id == TaxonomyTopic.id)
+                .filter(tuple_(ContentTopic.content_type, ContentTopic.content_id).in_(content_keys))
+                .all()
+            )
+            for content_type, content_id, slug in topic_rows:
+                topics_by_content[(content_type, content_id)].append(slug)
+
+            entity_rows = (
+                db.query(ContentEntity.content_type, ContentEntity.content_id, ContentEntity.entity_id)
+                .filter(tuple_(ContentEntity.content_type, ContentEntity.content_id).in_(content_keys))
+                .all()
+            )
+            for content_type, content_id, entity_id in entity_rows:
+                entities_by_content[(content_type, content_id)].append(str(entity_id))
+
+        source_weights: Dict[int, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        topic_weights: Dict[int, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        entity_weights: Dict[int, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+
         for event in events:
             if event.user_id in staff_user_ids:
                 continue
-            if event.content_type == "youtube_video":
-                key = "youtube"
-            else:
-                key = article_sources.get(event.content_id)
-            if key is None:
-                continue
 
-            age_days = (now - event.created_at).total_seconds() / 86400.0
-            weights[event.user_id][key] += _event_weight(event) * _decay(age_days)
+            content_key = (event.content_type, event.content_id)
+            if event.content_type == "youtube_video":
+                source_key = "youtube"
+            else:
+                source_key = article_sources.get(event.content_id)
+
+            weight = _event_weight(event) * _decay((now - event.created_at).total_seconds() / 86400.0)
+
+            if source_key is not None:
+                source_weights[event.user_id][source_key] += weight
+            # Topics/entities fan the SAME event weight out to every tag this
+            # item has (unlike source, an item can have several) — engaging
+            # with one article about both "LLMs" and "AI Agents" strengthens
+            # both topic affinities, not a split fraction of either.
+            for slug in topics_by_content.get(content_key, []):
+                topic_weights[event.user_id][slug] += weight
+            for entity_key in entities_by_content.get(content_key, []):
+                entity_weights[event.user_id][entity_key] += weight
 
         repo = UserAffinityRepository(db)
-        users_updated = 0
-        for user_id, source_weights in weights.items():
-            repo.replace_dimension_for_user(user_id, "source", dict(source_weights))
-            users_updated += 1
+        updated_users = set()
+        for user_id, weights in source_weights.items():
+            repo.replace_dimension_for_user(user_id, "source", dict(weights))
+            updated_users.add(user_id)
+        for user_id, weights in topic_weights.items():
+            repo.replace_dimension_for_user(user_id, "topic", dict(weights))
+            updated_users.add(user_id)
+        for user_id, weights in entity_weights.items():
+            repo.replace_dimension_for_user(user_id, "entity", dict(weights))
+            updated_users.add(user_id)
+        users_updated = len(updated_users)
 
     logger.info(
-        "affinity_tasks: aggregated source affinities for %d user(s) from %d event(s)",
+        "affinity_tasks: aggregated source/topic/entity affinities for %d user(s) from %d event(s)",
         users_updated, len(events),
     )
 

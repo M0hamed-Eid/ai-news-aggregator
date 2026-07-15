@@ -209,6 +209,12 @@ class ArticleRepository(BaseRepository[Article]):
             .all()
         )
 
+    def get_by_ids(self, ids: List[int]) -> List[Article]:
+        """Bulk-fetch by primary key — used to rehydrate a ranked id list (M9) into real rows."""
+        if not ids:
+            return []
+        return self.db.query(Article).filter(Article.id.in_(ids)).all()
+
 
 # =============================================================================
 # Helpers

@@ -110,6 +110,13 @@ class DjangoUserDigestSettings(DjangoBase):
     is_paused: Mapped[bool] = mapped_column(Boolean)
     expertise_level: Mapped[str] = mapped_column(String(20))
     content_depth: Mapped[str] = mapped_column(String(20))
+    # Preferences v2 (M9) — real scoring inputs for the two-stage ranker,
+    # not just display fields. See web/apps/onboarding/models.py's
+    # UserDigestSettings docstring for why expertise_level/content_depth
+    # above were reused rather than duplicated.
+    format_balance: Mapped[str] = mapped_column(String(20))
+    topic_lean: Mapped[str] = mapped_column(String(20))
+    reading_time_budget_minutes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
 
     profile: Mapped["DjangoUserProfile"] = relationship(back_populates="digest_settings")
 
@@ -142,4 +149,22 @@ class DjangoUserEvent(DjangoBase):
     content_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     content_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     value: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DjangoUserFollow(DjangoBase):
+    """
+    Read-only mirror of Django's user_follows (web/apps/behavior/models.py,
+    M9) — lets the two-stage ranker's candidate-generation stage
+    (app/services/ranking_service.py) read a user's followed entities/
+    topics/sources without the pipeline ever writing to a Django-owned
+    table. target_key's meaning depends on target_type — see UserFollow's
+    own docstring for the per-type string-key convention.
+    """
+    __tablename__ = "user_follows"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
+    target_type: Mapped[str] = mapped_column(String(20))
+    target_key: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

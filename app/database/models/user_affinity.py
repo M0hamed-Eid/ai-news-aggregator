@@ -7,9 +7,12 @@
 #
 # dimension/key is a generic (kind, value) pair so the same table serves
 # topic/source/entity affinities without a schema change per dimension.
-# Only "source" produces real rows until M8 ships topic/entity taxonomy —
-# that's a data-availability gap, not a schema gap, so the table supports
-# all three dimensions from day one.
+# Only "source" produced real rows until M8 shipped topic/entity taxonomy —
+# that was a data-availability gap, not a schema gap. As of M9, all three
+# dimensions are populated (see app/tasks/affinity_tasks.py). `key` is a
+# Source.key for "source", a TaxonomyTopic.slug for "topic", and a
+# stringified Entity.id for "entity" (Entity has no slug) — same
+# per-type string-key convention as UserFollow.target_key.
 #
 # user_id is a plain reference to Django's users.id, same convention as
 # UserRanking.user_id / DigestLog.user_id — no real cross-ORM FK.

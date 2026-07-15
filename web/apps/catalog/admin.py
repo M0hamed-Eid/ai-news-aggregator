@@ -2,7 +2,7 @@ from django.contrib import admin
 
 from .models import (
     Article, ContentCluster, ContentClusterMember, ContentEnrichment, ContentEntity,
-    ContentScore, ContentTopic, DigestClickToken, DigestLog, Entity, Source,
+    ContentScore, ContentTopic, DigestClickToken, DigestLog, Embedding, Entity, Source,
     TaxonomyTopic, UserAffinity, UserRanking, YoutubeVideo,
 )
 
@@ -126,3 +126,9 @@ class ContentScoreAdmin(ReadOnlyAdmin):
     list_display = ("content_type", "content_id", "score", "score_version", "computed_at")
     list_filter = ("score_version",)
     ordering = ("-score",)
+
+
+@admin.register(Embedding)
+class EmbeddingAdmin(ReadOnlyAdmin):
+    list_display = ("content_type", "content_id", "model_name", "created_at")
+    list_filter = ("content_type", "model_name")

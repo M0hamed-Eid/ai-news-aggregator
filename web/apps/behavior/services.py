@@ -5,7 +5,7 @@ this app.
 """
 from django.utils import timezone
 
-from .models import SavedItem
+from .models import SavedItem, UserFollow
 
 
 def _content_type_for(item) -> str:
@@ -43,6 +43,21 @@ def attach_saved_state(user, items):
         item.is_saved = bool(state and state.is_saved)
         item.is_hidden = bool(state and state.is_hidden)
     return items
+
+
+def get_followed_keys(user, target_type: str) -> set:
+    """
+    Set of target_keys this user follows for one target_type ("entity",
+    "topic", or "source") — used by templates to render a chip's follow
+    button in the already-followed state (Phase 6: entity/topic chips on
+    detail pages) without an N+1 query per chip.
+    """
+    if not user.is_authenticated:
+        return set()
+    return set(
+        UserFollow.objects.filter(user=user, target_type=target_type)
+        .values_list("target_key", flat=True)
+    )
 
 
 def mark_read(user, content_type: str, content_id: int) -> None:

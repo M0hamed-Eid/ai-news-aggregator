@@ -41,7 +41,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from app.agents.curator_agent import DigestItem, RankedArticle, UserProfile
+from app.ranking.types import DigestItem, RankedArticle, UserProfile
 from app.llm.client_factory import get_llm_client_and_model
 
 logger = logging.getLogger(__name__)
@@ -149,16 +149,18 @@ class EmailAgent:
 
     Typical usage
     -------------
-    from app.agents.curator_agent import CuratorAgent
     from app.agents.email_agent import EmailAgent
+    from app.database.repositories.user_ranking_repository import UserRankingRepository
     from app.services.recipients import get_active_recipients
 
-    digest_items = CuratorAgent.build_digest_items(articles + videos)
+    # ranking is computed on its own schedule (app/services/ranking_service.py,
+    # app/tasks/ranking_tasks.py) — DigestService just reads it back here.
     for recipient in get_active_recipients(db):
-        ranked   = CuratorAgent(recipient.profile).rank_digests(digest_items)
-        response = EmailAgent(recipient.profile).build_response(
-            ranked_scores=ranked,
+        ranked_rows = UserRankingRepository(db).get_for_user(recipient.user_id, limit=recipient.max_items)
+        response = EmailAgent(recipient.profile).build_response_with_urls(
+            ranked_scores=[...],   # rehydrated from ranked_rows — see digest_service.py
             all_items=digest_items,
+            content_meta=content_meta,
             limit=recipient.max_items,
         )
         print(response.to_markdown())

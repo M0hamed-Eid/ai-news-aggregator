@@ -78,3 +78,40 @@ class SavedItem(models.Model):
             f"user_id={self.user_id} {self.content_type}:{self.content_id} "
             f"saved={self.is_saved} read={self.is_read} hidden={self.is_hidden}"
         )
+
+
+class UserFollow(models.Model):
+    """
+    A user's follow of an entity, taxonomy topic, or source (M9) — feeds the
+    two-stage ranker's candidate-generation stage (app/services/ranking_service.py)
+    and is the substrate M10/M11 build person/entity pages and alerts on.
+
+    `target_key` is a plain string, matched by convention against whichever
+    pipeline-owned lookup table `target_type` names — same cross-ORM
+    convention as UserExclusion.value, chosen per-type to match how that
+    type is ALREADY referenced elsewhere in this codebase rather than
+    inventing a new convention:
+      - target_type="source" -> Source.key   (matches UserExclusion.value)
+      - target_type="topic"  -> TaxonomyTopic.slug (matches Interest/TaxonomyTopic's shared vocabulary)
+      - target_type="entity" -> str(Entity.id) (Entity has no slug; id is the only stable key)
+    """
+
+    TARGET_TYPE_CHOICES = [
+        ("entity", "Entity"),
+        ("topic", "Topic"),
+        ("source", "Source"),
+    ]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="follows")
+    target_type = models.CharField(max_length=20, choices=TARGET_TYPE_CHOICES)
+    target_key = models.CharField(max_length=200)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "user_follows"
+        constraints = [
+            models.UniqueConstraint(fields=["user", "target_type", "target_key"], name="uq_user_follow"),
+        ]
+
+    def __str__(self):
+        return f"user_id={self.user_id} follows {self.target_type}:{self.target_key}"

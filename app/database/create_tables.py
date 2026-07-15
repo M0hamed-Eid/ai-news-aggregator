@@ -51,6 +51,7 @@ def create_all_tables() -> None:
         UserAffinity, DigestClickToken,
         TaxonomyTopic, ContentTopic, Entity, ContentEntity,
         ContentCluster, ContentClusterMember, ContentEnrichment, ContentScore,
+        UserProfileVector,
     )
 
     # Step 3: create tables

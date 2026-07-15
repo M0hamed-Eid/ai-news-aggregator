@@ -4,11 +4,11 @@
 #
 # Why this service exists
 # -----------------------
-# The three agents (EnrichmentAgent, CuratorAgent, EmailAgent) each do one
-# job. Someone has to drive them in sequence and handle the database I/O
-# between steps. Putting that logic in run_pipeline.py would make it a
-# monolith; a dedicated service keeps concerns separated and makes the
-# pipeline easy to test and extend (e.g. scheduling, retries, dry-run mode).
+# EnrichmentAgent/RankingService/EmailAgent each do one job. Someone has to
+# drive them in sequence and handle the database I/O between steps. Putting
+# that logic in run_pipeline.py would make it a monolith; a dedicated
+# service keeps concerns separated and makes the pipeline easy to test and
+# extend (e.g. scheduling, retries, dry-run mode).
 #
 # Responsibility breakdown
 # ------------------------
@@ -18,10 +18,11 @@
 #    topics, entities.
 # 3. Persist across Article/YoutubeVideo.summary + content_enrichment +
 #    content_topics + content_entities, and re-embed immediately.
-# 4. Fetch ALL recent records (enriched or not) for ranking.
-# 5. Call CuratorAgent to rank them.
-# 6. Call EmailAgent to build the final EmailDigestResponse.
-# 7. Return the response to the caller (run_pipeline.py, a scheduler, etc.).
+# 4. Read back each recipient's CURRENT ranking (written by the scheduled
+#    app/tasks/ranking_tasks.py, not computed here — see M9 note below) and
+#    rehydrate it into real content.
+# 5. Call EmailAgent to build the final EmailDigestResponse.
+# 6. Return the response to the caller (run_pipeline.py, a scheduler, etc.).
 #
 # M8 — Content Intelligence Layer (2026-07-15)
 # ----------------------------------------------
@@ -32,52 +33,31 @@
 # `get_unsummarised()` (checked `summary IS NULL`), since every pre-M8 row
 # already has a summary but zero content_enrichment rows; the old check
 # would have silently skipped the entire backfill corpus forever.
-
-# app/services/digest_service.py
 #
-# DigestService: orchestrates the full "generate + curate + email" pipeline.
-#
-# Fixes from previous version
-# ----------------------------------
-# 1. BUG FIX: digest_response was never assigned to result — the service
-#    built the email digest but then returned result.digest_response = None,
-#    causing run_pipeline.py to log "No digest generated" every time.
-#    Fixed by building the EmailDigestResponse inside the session block and
-#    assigning it before returning.
-#
-# 2. BUG FIX: get_unsummarised(limit=20) was silently skipping older records.
-#    Raised the default limit to 200 so all unsummarised content is processed
-#    regardless of how many items are in the DB.
-#
-# 3. BUG FIX: Removed the duplicate DB fetch in Step 4. Previously the service
-#    fetched items twice (once for ranking, once for email) and discarded the
-#    second result. Now a single fetch is done, DigestItems are built from it
-#    inside the session, and a url_map is stored so EmailAgent can attach
-#    real URLs to the ranked articles.
-#
-# 4. Added url_map: digest_id → url so RankedArticleDetail.url is always
-#    populated correctly (previously it was always empty string "").
-#
-# 5. MULTI-USER MILESTONE (2026-07-12): Ranking + email building are no
-#    longer bound to one global config.user. Content is still fetched and
-#    summarised exactly ONCE (ingestion/summarisation stay global, per the
-#    "content collected once" requirement) — but Steps 3+4 now loop over
-#    every active, non-paused recipient (app/services/recipients.py), each
-#    getting their own CuratorAgent/EmailAgent instance (cheap to construct;
-#    no internal refactor of those agents was needed) and their own filtered
-#    content pool (category/source exclusions applied before ranking, so an
-#    excluded source never reaches that user's LLM prompt at all). Result:
-#    DigestServiceResult.digest_response (singular) is now digest_responses
-#    (one RecipientDigest per user who got a digest this run).
+# M9 — Owned Recommender (2026-07-15)
+# ----------------------------------------------
+# Ranking is no longer computed HERE. CuratorAgent (one Groq call per digest
+# batch) is deleted — replaced by RankingService's deterministic two-stage
+# ranker (app/services/ranking_service.py), which now runs on ITS OWN
+# schedule (app/tasks/ranking_tasks.py::rank_all_users_task, every 3 hours),
+# decoupled from digest send cadence per Architecture Principle 6 ("we do
+# not put an LLM in the hot path of ranking") and the roadmap's own explicit
+# M9 requirement ("so /feed stays fresh" between digest sends). This method
+# now just READS each recipient's current user_rankings rows and rehydrates
+# them into real content for the email — it only falls back to computing a
+# ranking on-demand (via the exact same RankingService) for a recipient with
+# NO ranking at all yet (cold start: a brand-new user before the scheduled
+# task has fired even once). In steady state, digest building never ranks
+# anything itself, it only reads.
 
 from __future__ import annotations
 
 import logging
 import os
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union
 
-from app.agents.curator_agent import CuratorAgent, DigestItem
 from app.agents.enrichment_agent import ENRICHMENT_VERSION, EnrichmentAgent, EnrichmentOutput
 from app.agents.email_agent import EmailAgent, EmailDigestResponse
 from app.config import AppConfig
@@ -96,6 +76,8 @@ from app.database.repositories.embedding_repository import EmbeddingRepository
 from app.database.repositories.taxonomy_topic_repository import TaxonomyTopicRepository
 from app.database.repositories.user_ranking_repository import UserRankingRepository
 from app.embeddings.embedding_service import embed_text
+from app.ranking.types import DigestItem, RankedArticle, build_digest_items
+from app.services.ranking_service import RANKER_VERSION, RankingService
 from app.services.recipients import Recipient, get_active_recipients, get_source_categories
 
 from app.utils.reading_time import estimate_reading_minutes, estimate_watch_minutes
@@ -200,57 +182,9 @@ class DigestService:
             result.videos_summarised = vid_count
             result.errors.extend(errors)
 
-        # ── Step 2: Fetch recent content + build DigestItems ─────────────
-        # Do this inside the session so ORM attributes are accessible.
-        # We also capture the url_map here so EmailAgent gets real URLs.
-        digest_items: List[DigestItem] = []
-        content_meta: Dict[str, dict] = {}  # digest_id → {url, image_url, reading_minutes}
-
-        try:
-            with get_db_session() as db:
-                articles = ArticleRepository(db).get_recent(hours=self._hours_window)
-                videos = YoutubeRepository(db).get_recent(hours=self._hours_window)
-                combined: List[Union[Article, YoutubeVideo]] = articles + videos
-
-                if not combined:
-                    logger.warning(
-                        "DigestService: no content found in the last %d hours",
-                        self._hours_window,
-                    )
-                    return result
-
-                # Build DigestItems while the session is still open. This is
-                # a plain static conversion (ORM -> flat view-model), shared
-                # across every recipient — no profile input needed here.
-                digest_items = CuratorAgent.build_digest_items(combined)
-
-                # Build url_map: digest_id → url (while ORM objects are attached)
-                for item in combined:
-                    if isinstance(item, Article):
-                        key = f"{item.source}:{item.id}"
-                        content_meta[key] = {
-                            "url": item.url,
-                            "image_url": item.image_url,
-                            "reading_minutes": estimate_reading_minutes(len((item.content or "").split())),
-                        }
-                    else:
-                        key = f"youtube:{item.id}"
-                        content_meta[key] = {
-                            "url": item.url,
-                            "image_url": youtube_thumbnail_url(item.video_id) if item.video_id else None,
-                            "reading_minutes": estimate_watch_minutes(len((item.content or "").split())),
-                        }
-
-        except Exception as exc:
-            msg = f"DigestService: failed to fetch recent content — {exc}"
-            logger.error(msg, exc_info=True)
-            result.errors.append(msg)
-            return result
-
-        logger.info("DigestService: %d items available for ranking", len(digest_items))
-
-        # ── Step 3: Look up recipients + per-source categories (for
-        # exclusion filtering) — one query each, not per-recipient. ────────
+        # ── Step 2: Look up recipients + per-source categories (for
+        # exclusion filtering, and for RankingService's cold-start fallback
+        # path) — one query each, not per-recipient. ────────────────────────
         try:
             with get_db_session() as db:
                 recipients = get_active_recipients(db)
@@ -269,47 +203,25 @@ class DigestService:
 
         logger.info("DigestService: building digests for %d recipient(s)", len(recipients))
 
-        # ── Step 4: Rank + build an email per recipient ───────────────────
-        # Content is fetched/summarised ONCE above (shared, global) — only
-        # ranking and email-building are per-user, using each recipient's own
-        # profile and content-pool exclusions.
+        # ── Step 3: Read each recipient's CURRENT ranking + build an email.
+        # Ranking itself is NOT computed here (M9) — see module docstring. ──
         for recipient in recipients:
-            filtered_items = [
-                d for d in digest_items
-                if d.article_type not in recipient.excluded_sources
-                and source_categories.get(d.article_type) not in recipient.excluded_categories
-            ]
-            if not filtered_items:
-                logger.info(
-                    "DigestService: nothing left for %s after exclusion filtering, skipping",
-                    recipient.profile.email,
-                )
-                continue
-
-            ranked = CuratorAgent(recipient.profile).rank_digests(filtered_items)
-            result.total_ranked += len(ranked)
-
-            if not ranked:
-                msg = f"DigestService: CuratorAgent returned no ranked items for {recipient.profile.email}"
-                logger.warning(msg)
+            try:
+                with get_db_session() as db:
+                    ranked, item_map, content_meta = self._load_or_compute_ranking(db, recipient, source_categories)
+            except Exception as exc:
+                msg = f"DigestService: failed to load ranking for {recipient.profile.email} — {exc}"
+                logger.error(msg, exc_info=True)
                 result.errors.append(msg)
                 continue
 
-            item_map = {d.digest_id: d for d in filtered_items}
-
-            # Persist the ranking for the web app's personalized feed (Django
-            # never re-ranks — it only ever reads this table). Real Django
-            # users only; the zero-active-users fallback recipient has no
-            # user_id and nothing to persist against.
-            if recipient.user_id is not None:
-                try:
-                    with get_db_session() as db:
-                        UserRankingRepository(db).replace_for_user(recipient.user_id, ranked, item_map)
-                except Exception as exc:
-                    logger.error(
-                        "DigestService: failed to persist ranking for user_id=%s — %s",
-                        recipient.user_id, exc, exc_info=True,
-                    )
+            if not ranked:
+                logger.info(
+                    "DigestService: nothing ranked for %s, skipping",
+                    recipient.profile.email,
+                )
+                continue
+            result.total_ranked += len(ranked)
 
             # ── Digest click tokens (M7): tracked redirect links so digest
             # CTR is measurable. Tokens are minted ONLY for the items that
@@ -358,7 +270,7 @@ class DigestService:
             try:
                 response = EmailAgent(recipient.profile).build_response_with_urls(
                     ranked_scores=ranked,
-                    all_items=filtered_items,
+                    all_items=list(item_map.values()),
                     content_meta=recipient_content_meta,
                     limit=recipient.max_items,
                 )
@@ -373,6 +285,74 @@ class DigestService:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _load_or_compute_ranking(
+        self, db, recipient: Recipient, source_categories: dict,
+    ) -> tuple[List[RankedArticle], Dict[str, DigestItem], Dict[str, dict]]:
+        """
+        Returns (ranked_scores, item_map, content_meta) for one recipient.
+
+        Steady state: reads recipient.user_id's current user_rankings rows
+        (written by the scheduled app/tasks/ranking_tasks.py) and rehydrates
+        them into real Article/YoutubeVideo rows — no ranking computed here.
+
+        Cold-start fallback: if NO ranking exists yet for this user (brand
+        new signup before the scheduled task has fired even once), computes
+        one on-demand via the exact same RankingService the scheduled task
+        uses, and persists it — so this is the ONLY code path where digest
+        building still triggers a ranking computation, and only once per
+        user ever (every later digest send finds existing rows).
+        """
+        existing = (
+            UserRankingRepository(db).get_for_user(recipient.user_id, limit=recipient.max_items)
+            if recipient.user_id is not None else []
+        )
+
+        if existing:
+            ids_by_type: Dict[str, List[int]] = defaultdict(list)
+            for row in existing:
+                ids_by_type[row.content_type].append(row.content_id)
+            orm_items = (
+                ArticleRepository(db).get_by_ids(ids_by_type.get("article", []))
+                + YoutubeRepository(db).get_by_ids(ids_by_type.get("youtube_video", []))
+            )
+            orm_by_key = {_orm_key(o): o for o in orm_items}
+
+            ranked_scores: List[RankedArticle] = []
+            item_map: Dict[str, DigestItem] = {}
+            for row in existing:
+                orm_item = orm_by_key.get((row.content_type, row.content_id))
+                if orm_item is None:
+                    continue  # purged/deleted since the ranking ran — skip gracefully
+                digest = build_digest_items([orm_item])[0]
+                item_map[digest.digest_id] = digest
+                ranked_scores.append(RankedArticle(
+                    digest_id=digest.digest_id, relevance_score=row.relevance_score,
+                    rank=row.rank, reasoning=row.reasoning, features=row.features or {},
+                ))
+            content_meta = _build_content_meta(item_map, orm_by_key)
+            return ranked_scores, item_map, content_meta
+
+        logger.info(
+            "DigestService: no existing ranking for %s, computing one on-demand (cold start)",
+            recipient.profile.email,
+        )
+        all_items: List[Union[Article, YoutubeVideo]] = (
+            ArticleRepository(db).get_recent(hours=self._hours_window, limit=1000)
+            + YoutubeRepository(db).get_recent(hours=self._hours_window, limit=1000)
+        )
+        if not all_items:
+            logger.warning("DigestService: no content in the last %d hours", self._hours_window)
+            return [], {}, {}
+
+        ranked_scores, item_map = RankingService(db).rank_for_user(recipient, all_items, source_categories)
+        if recipient.user_id is not None and ranked_scores:
+            UserRankingRepository(db).replace_for_user(
+                recipient.user_id, ranked_scores, item_map, score_version=RANKER_VERSION,
+            )
+        orm_by_key = {_orm_key(o): o for o in all_items}
+        content_meta = _build_content_meta(item_map, orm_by_key)
+        return ranked_scores, item_map, content_meta
 
     def _enrich_unenriched(
         self,
@@ -498,3 +478,38 @@ class DigestService:
             logger.exception(
                 "DigestService: failed to re-embed %s:%s after enrichment", content_type, content_id,
             )
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers (M9) — shared by both branches of
+# DigestService._load_or_compute_ranking().
+# ---------------------------------------------------------------------------
+
+def _orm_key(item: Union[Article, YoutubeVideo]) -> tuple[str, int]:
+    return ("article", item.id) if isinstance(item, Article) else ("youtube_video", item.id)
+
+
+def _content_meta_for(item: Union[Article, YoutubeVideo]) -> dict:
+    if isinstance(item, Article):
+        return {
+            "url": item.url,
+            "image_url": item.image_url,
+            "reading_minutes": estimate_reading_minutes(len((item.content or "").split())),
+        }
+    return {
+        "url": item.url,
+        "image_url": youtube_thumbnail_url(item.video_id) if item.video_id else None,
+        "reading_minutes": estimate_watch_minutes(len((item.content or "").split())),
+    }
+
+
+def _build_content_meta(
+    item_map: Dict[str, DigestItem], orm_by_key: Dict[tuple[str, int], Union[Article, YoutubeVideo]],
+) -> Dict[str, dict]:
+    content_meta: Dict[str, dict] = {}
+    for digest_id, digest in item_map.items():
+        content_type = "youtube_video" if digest.article_type == "youtube" else "article"
+        orm_item = orm_by_key.get((content_type, digest.db_id))
+        if orm_item is not None:
+            content_meta[digest_id] = _content_meta_for(orm_item)
+    return content_meta

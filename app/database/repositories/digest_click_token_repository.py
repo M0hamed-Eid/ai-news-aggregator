@@ -6,7 +6,10 @@
 # sitting in an already-delivered email.
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple
+
+from sqlalchemy import func
 
 from app.database.models.digest_click_token import DigestClickToken
 from app.database.repositories.base_repository import BaseRepository
@@ -18,6 +21,27 @@ class DigestClickTokenRepository(BaseRepository[DigestClickToken]):
 
     def __init__(self, db) -> None:
         super().__init__(db, DigestClickToken)
+
+    def get_last_shown_at(self, user_id: int, days: int = 30) -> Dict[Tuple[str, int], datetime]:
+        """
+        {(content_type, content_id): most_recent_created_at} for everything
+        minted into a digest for this user in the last `days` — the ranker's
+        novelty-penalty feature reads this (M9): an item shown recently gets
+        penalized so the same top item doesn't monopolize every ranking run;
+        the penalty fades as that history ages.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        rows = (
+            self.db.query(
+                DigestClickToken.content_type,
+                DigestClickToken.content_id,
+                func.max(DigestClickToken.created_at),
+            )
+            .filter(DigestClickToken.user_id == user_id, DigestClickToken.created_at >= cutoff)
+            .group_by(DigestClickToken.content_type, DigestClickToken.content_id)
+            .all()
+        )
+        return {(content_type, content_id): last_shown for content_type, content_id, last_shown in rows}
 
     def mint_for_recipient(
         self, user_id: int, items: List[Tuple[str, int]],

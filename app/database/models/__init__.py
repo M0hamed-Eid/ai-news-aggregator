@@ -24,10 +24,12 @@ from app.database.models.content_cluster import ContentCluster
 from app.database.models.content_cluster_member import ContentClusterMember
 from app.database.models.content_enrichment import ContentEnrichment
 from app.database.models.content_score import ContentScore
+from app.database.models.user_profile_vector import UserProfileVector
 
 __all__ = [
     "Article", "YoutubeVideo", "Embedding", "Source", "UserRanking", "DigestLog",
     "UserAffinity", "DigestClickToken",
     "TaxonomyTopic", "ContentTopic", "Entity", "ContentEntity",
     "ContentCluster", "ContentClusterMember", "ContentEnrichment", "ContentScore",
+    "UserProfileVector",
 ]

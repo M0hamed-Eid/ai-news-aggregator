@@ -36,11 +36,28 @@ celery_app = Celery(
         "app.tasks.health_tasks",
         "app.tasks.pipeline_tasks",
         "app.tasks.affinity_tasks",
+        "app.tasks.profile_vector_tasks",
+        "app.tasks.ranking_tasks",
+        "app.tasks.search_tasks",
     ],
 )
 
 celery_app.conf.timezone = "UTC"
 celery_app.conf.enable_utc = True
+
+# M9 — interactive/low-latency tasks (currently just query embedding for
+# semantic search) get their OWN queue, consumed by a SEPARATE worker
+# process from the default queue the 6-hourly pipeline run occupies for
+# minutes at a time. Without this, a search request queued onto the same
+# worker/queue as a running scrape/enrich/cluster/score pass would simply
+# time out — confirmed as a real risk during M9 design review, not a
+# hypothetical. task_routes here covers any sender that imports this Celery
+# app; Django's own lightweight client (web/apps/news/search.py) ALSO
+# passes queue="interactive" explicitly on send_task(), since it does NOT
+# import this app/config (that's the whole point — it stays dependency-free).
+celery_app.conf.task_routes = {
+    "app.tasks.search_tasks.*": {"queue": "interactive"},
+}
 
 # Mirrors this project's existing cron precedent (README: "0 */6 * * *") —
 # the manual run_pipeline.py CLI entry point still works for one-off runs.
@@ -49,9 +66,25 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.pipeline_tasks.run_full_pipeline_task",
         "schedule": crontab(minute=0, hour="*/6"),
     },
-    # M7 — nightly affinity aggregation + event retention prune.
+    # M7 — nightly affinity aggregation + event retention prune. M9 extended
+    # this task to also populate topic/entity affinity dimensions.
     "aggregate-affinities-nightly": {
         "task": "app.tasks.affinity_tasks.aggregate_affinities_task",
         "schedule": crontab(minute=0, hour=3),
+    },
+    # M9 — nightly profile-vector recomputation. Scheduled right after
+    # affinities (3:15 vs 3:00) since both read the same user_events window;
+    # not the same task because a taste VECTOR and scalar affinity WEIGHTS
+    # are different outputs read by different parts of the ranker.
+    "compute-profile-vectors-nightly": {
+        "task": "app.tasks.profile_vector_tasks.compute_profile_vectors_task",
+        "schedule": crontab(minute=15, hour=3),
+    },
+    # M9 — ranking runs on its OWN schedule, decoupled from the 6-hour
+    # scrape/enrich/digest cadence, so /feed stays fresh in between digest
+    # sends (every 3 hours vs. the pipeline's every-6-hours).
+    "rank-all-users-every-3-hours": {
+        "task": "app.tasks.ranking_tasks.rank_all_users_task",
+        "schedule": crontab(minute=30, hour="*/3"),
     },
 }

@@ -16,6 +16,8 @@
  * - Save/Hide buttons use a normal fetch() with the standard Django AJAX
  *   CSRF pattern (X-CSRFToken header from the csrftoken cookie) — a normal
  *   same-origin request, unlike the beacon endpoint below.
+ * - Follow/unfollow chip buttons (M9 — entity/topic chips on detail pages)
+ *   use the identical fetch()+CSRF pattern against /behavior/follow/.
  */
 (function () {
   "use strict";
@@ -173,6 +175,42 @@
             if (card) card.remove(); // "show less like this" — immediate feedback
           }
         }
+      })
+      .catch(function () {
+        /* best-effort — leave the button in its current visual state */
+      });
+  });
+
+  // ---- Follow/unfollow chip toggles (M9) ---------------------------------
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest(".btn-follow-chip");
+    if (!btn) return;
+    e.preventDefault();
+
+    fetch("/behavior/follow/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": getCsrfToken(),
+      },
+      body: JSON.stringify({
+        target_type: btn.dataset.targetType,
+        target_key: btn.dataset.targetKey,
+      }),
+    })
+      .then(function (r) {
+        if (r.status === 403) {
+          window.location.href = "/accounts/login/?next=" + encodeURIComponent(window.location.pathname);
+          return null;
+        }
+        return r.ok ? r.json() : null;
+      })
+      .then(function (data) {
+        if (!data) return;
+        var active = data.following;
+        btn.dataset.active = active ? "true" : "false";
+        var icon = btn.querySelector("i");
+        if (icon) icon.className = active ? "bi bi-check-lg" : "bi bi-plus-lg";
       })
       .catch(function () {
         /* best-effort — leave the button in its current visual state */

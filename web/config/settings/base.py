@@ -96,6 +96,14 @@ CACHES = {
     }
 }
 
+# M9 — semantic search's query-embedding Celery client (web/apps/news/search.py)
+# needs the PIPELINE's broker/backend DB (0), which is DELIBERATELY a
+# different env var from CACHES' own REDIS_URL above (DB 1) — reusing
+# REDIS_URL for both would repeat the exact DB-index collision class
+# already documented in .wolf/buglog.json (pipeline-015): two processes,
+# two different intended Redis DBs, same-looking env var name.
+CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://127.0.0.1:6379/0")
+
 AUTH_USER_MODEL = "accounts.User"
 
 AUTH_PASSWORD_VALIDATORS = [

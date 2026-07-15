@@ -4,7 +4,10 @@
 #
 # Phase 1 — scrape YouTube + blogs + Source-Registry-driven sources → insert into PostgreSQL
 # Phase 2 — enrich content (EnrichmentAgent: summary + M8 structured fields) for unenriched records
-# Phase 3 — rank content (CuratorAgent) + build + send email (EmailAgent)
+# Phase 3 — build + send email from each recipient's CURRENT ranking (EmailAgent) — ranking
+#           itself is computed separately, on its own schedule (app/tasks/ranking_tasks.py,
+#           M9's deterministic RankingService — CuratorAgent/LLM ranking is gone)
+# Phase 3.5 — cross-source clustering + heuristic quality scoring (M8)
 #
 # Usage:
 #   python run_pipeline.py

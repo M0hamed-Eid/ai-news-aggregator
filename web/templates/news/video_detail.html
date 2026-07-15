@@ -35,7 +35,15 @@
 
   {% if topics %}
     <div class="mb-3">
-      {% for topic in topics %}<span class="badge badge-topic">{{ topic.name }}</span>{% endfor %}
+      {% for topic in topics %}
+        <button type="button" class="badge badge-topic btn-follow-chip" data-action="follow"
+                data-target-type="topic" data-target-key="{{ topic.slug }}"
+                data-active="{% if topic.slug in followed_topics %}true{% else %}false{% endif %}"
+                aria-label="Follow {{ topic.name }}" title="Follow this topic">
+          {{ topic.name }}
+          <i class="bi {% if topic.slug in followed_topics %}bi-check-lg{% else %}bi-plus-lg{% endif %}"></i>
+        </button>
+      {% endfor %}
     </div>
   {% endif %}
 
@@ -52,7 +60,15 @@
   {% if entities %}
     <div class="mb-3">
       <span class="text-muted small me-1">Mentioned:</span>
-      {% for entity in entities %}<span class="badge rounded-pill text-bg-light border me-1">{{ entity.name }}</span>{% endfor %}
+      {% for entity in entities %}
+        <button type="button" class="badge rounded-pill text-bg-light border me-1 btn-follow-chip" data-action="follow"
+                data-target-type="entity" data-target-key="{{ entity.id }}"
+                data-active="{% if entity.id|stringformat:'s' in followed_entities %}true{% else %}false{% endif %}"
+                aria-label="Follow {{ entity.name }}" title="Follow this entity">
+          {{ entity.name }}
+          <i class="bi {% if entity.id|stringformat:'s' in followed_entities %}bi-check-lg{% else %}bi-plus-lg{% endif %}"></i>
+        </button>
+      {% endfor %}
     </div>
   {% endif %}
 

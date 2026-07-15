@@ -100,6 +100,38 @@ class ProfileView(LoginRequiredMixin, TemplateView):
             if frequency in dict(settings_obj._meta.get_field("frequency").choices):
                 settings_obj.frequency = frequency
             settings_obj.is_paused = bool(request.POST.get("is_paused"))
+
+            # Ranking preferences (M9) — these were previously either inert
+            # (expertise_level/content_depth had no form control anywhere)
+            # or didn't exist (format_balance/topic_lean/reading_time_budget).
+            # RankingService reads all of these as real scoring inputs now.
+            expertise_level = request.POST.get("expertise_level")
+            if expertise_level in dict(settings_obj._meta.get_field("expertise_level").choices):
+                settings_obj.expertise_level = expertise_level
+
+            format_balance = request.POST.get("format_balance")
+            if format_balance in dict(settings_obj._meta.get_field("format_balance").choices):
+                settings_obj.format_balance = format_balance
+
+            topic_lean = request.POST.get("topic_lean")
+            if topic_lean in dict(settings_obj._meta.get_field("topic_lean").choices):
+                settings_obj.topic_lean = topic_lean
+
+            try:
+                max_items = int(request.POST.get("max_items", ""))
+                settings_obj.max_items = max(5, min(50, max_items))
+            except (TypeError, ValueError):
+                pass
+
+            budget_raw = request.POST.get("reading_time_budget_minutes", "").strip()
+            if not budget_raw:
+                settings_obj.reading_time_budget_minutes = None
+            else:
+                try:
+                    settings_obj.reading_time_budget_minutes = max(1, min(120, int(budget_raw)))
+                except (TypeError, ValueError):
+                    pass
+
             settings_obj.save()
 
         messages.success(request, "Profile updated.")

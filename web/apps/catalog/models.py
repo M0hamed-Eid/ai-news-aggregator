@@ -12,6 +12,7 @@ test in the roadmap).
 """
 from django.conf import settings
 from django.db import models
+from pgvector.django import VectorField
 
 
 class ReadOnly:
@@ -182,6 +183,8 @@ class UserRanking(ReadOnly, models.Model):
     rank = models.IntegerField()
     relevance_score = models.FloatField()
     reasoning = models.TextField(blank=True, default="")
+    score_version = models.CharField(max_length=50, blank=True, default="")
+    features = models.JSONField(default=dict, blank=True)
     computed_at = models.DateTimeField()
 
     class Meta:
@@ -484,3 +487,33 @@ class ContentScore(ReadOnly, models.Model):
 
     def __str__(self):
         return f"{self.content_type}:{self.content_id} score={self.score:.3f}"
+
+
+class Embedding(ReadOnly, models.Model):
+    """
+    pgvector embedding for one article/video (table: embeddings) — written by
+    app/embeddings/embedding_service.py, read-only here. Added in M9 so
+    semantic search (web/apps/news/search.py) can run a cosine-distance query
+    directly against the shared Postgres instance via Django's own connection
+    — no ML dependency needed in this process, only pgvector's lightweight
+    (pure Python + numpy) Django integration. Turning a user's free-text
+    query into a vector still requires the actual embedding MODEL, which
+    Django does not load; that happens via a dedicated Celery task on its own
+    queue (app/tasks/search_tasks.py) — see that module's docstring.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    content_type = models.CharField(max_length=20)
+    content_id = models.BigIntegerField()
+    embedding = VectorField(dimensions=384)
+    model_name = models.CharField(max_length=100)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "embeddings"
+        verbose_name = "embedding"
+        verbose_name_plural = "embeddings"
+
+    def __str__(self):
+        return f"{self.content_type}:{self.content_id}"

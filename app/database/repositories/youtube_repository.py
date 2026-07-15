@@ -171,6 +171,12 @@ class YoutubeRepository(BaseRepository[YoutubeVideo]):
             .all()
         )
 
+    def get_by_ids(self, ids: List[int]) -> List[YoutubeVideo]:
+        """Bulk-fetch by primary key — used to rehydrate a ranked id list (M9) into real rows."""
+        if not ids:
+            return []
+        return self.db.query(YoutubeVideo).filter(YoutubeVideo.id.in_(ids)).all()
+
 
 def _ensure_tz(dt: datetime) -> datetime:
     if dt.tzinfo is None:

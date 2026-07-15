@@ -36,10 +36,14 @@
 #    tables (see app/database/models/django_readmodels.py, a read-only
 #    cross-ORM mirror) and assembled into a UserProfile instance PER
 #    RECIPIENT by app/services/recipients.py — UserProfile the dataclass
-#    still exists (as a type contract CuratorAgent/EmailAgent expect), just
-#    relocated to app/agents/curator_agent.py since that's where it's
-#    actually consumed, not here. This file now holds only infrastructure
-#    settings, per the project's "config = infra, DB = business data" rule.
+#    still exists (as a type contract EmailAgent/RankingService expect),
+#    just relocated to app/agents/curator_agent.py since that's where it was
+#    consumed at the time. This file now holds only infrastructure settings,
+#    per the project's "config = infra, DB = business data" rule.
+# 8. [M9] CuratorAgent (and app/agents/curator_agent.py itself) is now
+#    deleted — UserProfile/DigestItem/RankedArticle moved on again, to the
+#    LLM-agnostic app/ranking/types.py, since ranking is no longer LLM-based
+#    (see app/services/ranking_service.py).
 
 from dataclasses import dataclass, field
 

@@ -2,8 +2,8 @@
 #
 # Assembles the list of digest recipients for this pipeline run. Each active,
 # non-paused Django user becomes a Recipient: a UserProfile (the exact shape
-# CuratorAgent/EmailAgent already expect — see app/agents/curator_agent.py)
-# plus the extra per-user knobs those agents don't need to know about
+# RankingService/EmailAgent expect — see app/ranking/types.py)
+# plus the extra per-user knobs those don't need to know about
 # (max_items, excluded_categories, excluded_sources — used by DigestService
 # to filter the shared content pool BEFORE ranking, not by the agents
 # themselves).
@@ -25,7 +25,7 @@ from typing import List, Optional, Set
 
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app.agents.curator_agent import UserProfile
+from app.ranking.types import UserProfile
 from app.database.models.django_readmodels import DjangoUser, DjangoUserProfile
 from app.database.repositories.source_repository import SourceRepository
 
@@ -54,6 +54,13 @@ class Recipient:
     # UserRankingRepository.replace_for_user() so web/'s /feed can read back
     # this recipient's ranking (frontend milestone, 2026-07-13).
     user_id: Optional[int] = None
+    # Preferences v2 (M9) — real scoring inputs for RankingService, kept as
+    # their own typed Recipient fields (not nested in UserProfile.preferences'
+    # untyped dict) since they're new, ranking-specific knobs, not something
+    # EmailAgent/the old CuratorAgent prompt ever read.
+    format_balance: str = "balanced"
+    topic_lean: str = "balanced"
+    reading_time_budget_minutes: Optional[int] = None
 
 
 def get_source_categories(db: Session) -> dict:
@@ -131,6 +138,9 @@ def get_active_recipients(db: Session) -> List[Recipient]:
             excluded_categories=excluded_categories,
             excluded_sources=excluded_sources,
             user_id=user.id,
+            format_balance=(settings.format_balance if settings is not None else "balanced"),
+            topic_lean=(settings.topic_lean if settings is not None else "balanced"),
+            reading_time_budget_minutes=(settings.reading_time_budget_minutes if settings is not None else None),
         ))
 
     if recipients:

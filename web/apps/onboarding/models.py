@@ -89,7 +89,20 @@ class UserInterest(models.Model):
 
 
 class UserDigestSettings(models.Model):
-    """Per-user digest delivery preferences. Auto-created (all defaults) on signup."""
+    """
+    Per-user digest delivery preferences. Auto-created (all defaults) on signup.
+
+    Preferences v2 (M9): `expertise_level`/`content_depth` already existed but
+    were previously INERT — recipients.py read them into UserProfile.preferences
+    but CuratorAgent's prompt only ever used expertise_level as prose context,
+    never as an actual ranking input (per Architecture Principle 10: "a
+    preference nothing acts on is UI debt"). The two-stage ranker
+    (app/services/ranking_service.py) now maps expertise_level to a target
+    technical_depth band, finally making it load-bearing — so no new
+    "difficulty" field was added here, the existing one was wired up instead.
+    format_balance/topic_lean/reading_time_budget_minutes are genuinely new
+    knobs the old CuratorAgent had no equivalent of.
+    """
 
     profile = models.OneToOneField(
         "accounts.UserProfile", on_delete=models.CASCADE, related_name="digest_settings"
@@ -112,6 +125,30 @@ class UserDigestSettings(models.Model):
         max_length=20,
         choices=[("technical", "Technical"), ("overview", "Overview")],
         default="technical",
+    )
+    format_balance = models.CharField(
+        max_length=20,
+        choices=[
+            ("balanced", "Balanced"),
+            ("articles", "Prefer articles"),
+            ("videos", "Prefer videos"),
+        ],
+        default="balanced",
+        help_text="Soft nudge on article vs. video mix in ranked results — never a hard filter.",
+    )
+    topic_lean = models.CharField(
+        max_length=20,
+        choices=[
+            ("balanced", "Balanced"),
+            ("research", "Research-leaning"),
+            ("industry", "Industry-leaning"),
+        ],
+        default="balanced",
+        help_text="Nudges ranking toward research-paper-style vs. product/industry-news content_category groupings.",
+    )
+    reading_time_budget_minutes = models.IntegerField(
+        null=True, blank=True,
+        help_text="Soft per-item time budget the ranker penalizes (not excludes) items against. Blank = no budget.",
     )
 
     class Meta:
