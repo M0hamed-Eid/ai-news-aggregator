@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Insights · AI Compass{% endblock %}
+{% block content %}
+
+<h1 class="h3 app-section-title mb-1"><i class="bi bi-lightbulb text-primary"></i> Weekly Insights</h1>
+<p class="text-muted mb-4">A grounded, cited briefing on what's trending in AI — every claim below is backed by real corpus items, never invented.</p>
+
+{% if not can_view %}
+  <div class="app-card p-4 p-md-5 text-center">
+    <i class="bi bi-lock display-4 text-muted mb-3"></i>
+    <h2 class="h5 mb-2">Weekly Insights is a Pro feature</h2>
+    <p class="text-muted mb-0">Upgrade to Pro to get a grounded, cited weekly briefing on what's trending in AI — delivered to your inbox and available here.</p>
+  </div>
+{% elif report %}
+  <p class="text-muted small mb-4">Week of {{ report.week_start_date }} · generated {{ report.generated_at|date:"F j, Y" }}</p>
+  {% for claim in claims %}
+    <div class="app-card p-4 mb-3">
+      <h2 class="h5 mb-2">{{ claim.headline }}</h2>
+      <p class="mb-2">{{ claim.body }}</p>
+      {% if claim.citation_items %}
+        <div class="d-flex flex-wrap gap-2 mt-3">
+          <span class="text-muted small text-uppercase me-1 align-self-center">Sources:</span>
+          {% for item in claim.citation_items %}
+            <a href="{% if item.video_id %}{% url 'news:video_detail' item.pk %}{% else %}{% url 'news:article_detail' item.pk %}{% endif %}"
+               class="badge rounded-pill text-bg-light border text-decoration-none">
+              {{ item.title|truncatechars:40 }}
+            </a>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  {% empty %}
+    {% include "components/_empty_state.html" with icon="bi-lightbulb" title="No insights yet" message="Nothing trended strongly enough last week to write a grounded briefing about." %}
+  {% endfor %}
+{% else %}
+  {% include "components/_empty_state.html" with icon="bi-lightbulb" title="No report yet" message="The first weekly briefing hasn't been generated yet — check back soon." %}
+{% endif %}
+
+{% endblock %}

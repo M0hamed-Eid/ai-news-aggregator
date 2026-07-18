@@ -227,7 +227,8 @@ Celery's default prefork pool has known issues on Windows — always pass
 ### Run the worker + beat (two separate processes)
 
 ```bash
-# Terminal 1 — executes tasks (default queue: scrape/enrich/cluster/score/digest/affinity/ranking)
+# Terminal 1 — executes tasks (default queue: scrape/stt-dispatch/embed/enrich/
+# deep-video/cluster/score/digest/affinity/ranking)
 python -m celery -A app.celery_app:celery_app worker --pool=solo --loglevel=info
 
 # Terminal 2 — fires the scheduled task every 6 hours (crontab, code-defined,
@@ -254,6 +255,28 @@ python -m celery -A app.celery_app:celery_app worker --pool=solo --loglevel=info
 If this worker isn't running, `/search/` degrades gracefully to keyword
 search after a 5s timeout (a visible banner tells the user) — it never 500s.
 
+### Run a dedicated "stt" worker (M12 — speech-to-text for caption-less video)
+
+`app.tasks.stt_tasks.transcribe_video_task` (yt-dlp audio pull + local
+`faster-whisper` CPU transcription) can take minutes per video — it has its
+own `stt` queue so it never blocks the default queue's 6-hourly pipeline
+chain. Per the roadmap's own infra note, this worker ideally runs from a
+**residential IP** (yt-dlp is more likely to get rate-limited/blocked from a
+datacenter IP) — this dev machine qualifies.
+
+```bash
+# Terminal 4 — ONLY consumes the stt queue
+python -m celery -A app.celery_app:celery_app worker --pool=solo --loglevel=info -Q stt -n stt-worker@%h
+```
+
+If no worker consumes this queue, queued jobs simply wait — `stt_jobs.status`
+stays `'running'` (claimed by the dispatch phase) until a worker picks them
+up; nothing else in the pipeline depends on STT completing promptly. Measured
+go/no-go throughput on this dev machine: `distil-large-v3` (the default,
+override via `WHISPER_MODEL` env var) runs at ~1.76x real-time on CPU/int8 (a
+1013s video took 1778s to transcribe) — STT lagging behind ingestion is
+expected/accepted at this project's scale, not a bug.
+
 ### Available tasks
 
 | Task | Purpose |
@@ -264,11 +287,18 @@ search after a 5s timeout (a visible banner tells the user) — it never 500s.
 | `app.tasks.pipeline_tasks.digest_task` | Enrich unenriched content (one `EnrichmentAgent` LLM call/item) + build/send digests from each recipient's *current* ranking |
 | `app.tasks.pipeline_tasks.cluster_task` | M8: cross-source near-duplicate clustering (Union-Find over pgvector k-NN) |
 | `app.tasks.pipeline_tasks.score_task` | M8: heuristic quality scoring for every article/video |
-| `app.tasks.pipeline_tasks.run_full_pipeline_task` | scrape → embed → enrich/digest → cluster → score, what beat schedules |
+| `app.tasks.pipeline_tasks.trend_task` | M11: burst detection (z-score of topic/entity mention frequency vs. trailing 30-day baseline) — LLM-free, pure SQL/statistics |
+| `app.tasks.pipeline_tasks.stt_dispatch_task` | M12: claims queued `stt_jobs` rows (`queued`→`running`) and dispatches `transcribe_video_task` per job onto the `stt` queue |
+| `app.tasks.pipeline_tasks.deep_video_task` | M12: chunks + chaptered-summarizes every video ≥ `LONG_VIDEO_THRESHOLD_SECONDS` (1200s) that doesn't have `content_chunks` yet — map via `ChunkSummaryAgent`, reduce via the existing `EnrichmentAgent` fed the concatenated chunk summaries |
+| `app.tasks.stt_tasks.transcribe_video_task` | M12: yt-dlp audio pull + `faster-whisper` transcription for one caption-less video — routed to the `stt` queue only |
+| `app.tasks.pipeline_tasks.run_full_pipeline_task` | scrape → stt-dispatch → embed → enrich/digest → deep-video → cluster → score → trends, what beat schedules |
 | `app.tasks.affinity_tasks.aggregate_affinities_task` | Nightly (M7, extended M9): raw `user_events` → time-decayed `user_affinities` across source/topic/entity dimensions, then prunes events >90 days old via a `manage.py prune_old_events` subprocess |
 | `app.tasks.profile_vector_tasks.compute_profile_vectors_task` | M9: nightly decayed weighted-mean embedding per user (`user_profile_vectors`) from click/save/digest_click events |
 | `app.tasks.ranking_tasks.rank_all_users_task` | M9: the two-stage deterministic ranker, on its own 3-hour schedule — decoupled from digest cadence so `/feed` stays fresh |
 | `app.tasks.search_tasks.embed_query_task` | M9: embeds a free-text search query — routed to the `interactive` queue only |
+| `app.tasks.source_submission_tasks.evaluate_and_register_source_task` | M10: runs the AI-relevance gate against a user-submitted feed and registers it if accepted — routed to the `interactive` queue (a user is waiting live for the result) |
+| `app.tasks.source_revalidation_tasks.revalidate_user_sources_task` | M10: monthly re-check of every user-submitted source against the same relevance gate — deactivates newly off-topic sources, reactivates previously-rejected ones that are relevant again |
+| `app.tasks.trend_tasks.generate_weekly_trend_report_task` | M11: the weekly grounded, cited trend narrative (Pro) — retrieval-grounded LLM call with handle-based citation resolution, auto-publishes, emails effective-Pro users |
 
 Dispatch one manually to confirm the round-trip works:
 
@@ -529,24 +559,28 @@ content.
 Everything lives in the `public` schema of one database — no separate
 schema per app.
 
-**Table ownership map** (verified against the actual model files, M9):
+**Table ownership map** (verified against the actual model files, M12):
 
 | Owner | Tables | Migrated by |
 |---|---|---|
-| Pipeline (SQLAlchemy) | `articles`, `youtube_videos`, `embeddings`, `sources`, `user_rankings`, `digest_log`, `user_affinities`, `digest_click_tokens`, `taxonomy_topics`, `content_topics`, `entities`, `content_entities`, `content_clusters`, `content_cluster_members`, `content_enrichment`, `content_scores`, `user_profile_vectors` | Alembic |
-| Django | `users`, `user_profiles`, `personas`, `interests`, `user_interests`, `user_digest_settings`, `user_exclusions`, `user_events`, `saved_items`, `user_follows` | Django migrations |
+| Pipeline (SQLAlchemy) | `articles`, `youtube_videos`, `embeddings`, `sources`, `user_rankings`, `digest_log`, `user_affinities`, `digest_click_tokens`, `taxonomy_topics`, `content_topics`, `entities`, `content_entities`, `content_clusters`, `content_cluster_members`, `content_enrichment`, `content_scores`, `user_profile_vectors`, `person_entities`, `trends`, `trend_reports`, `content_chunks`, `stt_jobs` | Alembic |
+| Django | `users`, `user_profiles`, `personas`, `interests`, `user_interests`, `user_digest_settings`, `user_exclusions`, `user_events`, `saved_items`, `user_follows`, `user_source_subscriptions` | Django migrations |
 
 **Read-only mirrors** (same physical table, read from the *other* ORM,
 never migrated or written by it):
 
 - Django reads pipeline tables via `web/apps/catalog/models.py`
-  (`managed = False`) — all 17 pipeline tables above **except**
+  (`managed = False`) — all 22 pipeline tables above **except**
   `user_profile_vectors` (no Django mirror exists yet; only the pipeline
-  reads it today).
+  reads it today). M12's `content_chunks`/`stt_jobs` mirrors follow the
+  exact same pattern.
 - The pipeline reads Django tables via
   `app/database/models/django_readmodels.py` (a separate `DjangoBase`) —
-  all 10 Django tables above **except** `saved_items` (nothing in the
-  pipeline needs it yet).
+  all 11 Django tables above **except** `saved_items` (nothing in the
+  pipeline needs it yet). M11 extended the `users` mirror (`DjangoUser`)
+  with `plan`/`plan_expires_at` so the weekly trend-narrative broadcast
+  email (run from the pipeline process) can identify effective-Pro users
+  without importing Django.
 
 **Populated by background jobs, not by request handlers:**
 
@@ -756,12 +790,16 @@ python -m app.database.seed_taxonomy_topics                # Taxonomy (27 rows)
 
 **Celery queues:**
 
-- **`celery`** (default) — scrape, embed, enrich, cluster, score, digest,
-  nightly affinity aggregation, nightly profile-vector computation, and
-  ranking. One worker process, `--pool=solo`.
-- **`interactive`** (M9) — **only** `search_tasks.embed_query_task`. A
-  SEPARATE worker process, so a search request never queues behind a
-  multi-minute pipeline run on the default queue.
+- **`celery`** (default) — scrape, embed, enrich, cluster, score, trends
+  (M11 burst detection), digest, nightly affinity aggregation, nightly
+  profile-vector computation, ranking, the monthly user-source
+  re-validation job, and (M11) the weekly trend-narrative report. One
+  worker process, `--pool=solo`.
+- **`interactive`** (M9, extended M10) — `search_tasks.embed_query_task`
+  and `source_submission_tasks.evaluate_and_register_source_task`. A
+  SEPARATE worker process, so a search request or an "add a source"
+  submission never queues behind a multi-minute pipeline run on the
+  default queue.
 
 **Scheduled jobs** (Celery beat — all crontab, code-defined in
 `app/celery_app.py`, no DB-backed schedule table):
@@ -772,8 +810,11 @@ python -m app.database.seed_taxonomy_topics                # Taxonomy (27 rows)
 | `aggregate_affinities_task` | nightly, 3:00 UTC | nightly batch |
 | `compute_profile_vectors_task` | nightly, 3:15 UTC | nightly batch |
 | `rank_all_users_task` | every 3h | periodic batch |
+| `revalidate_user_sources_task` | monthly, 1st @ 4:00 UTC | periodic batch |
+| `generate_weekly_trend_report_task` | weekly, Monday @ 6:00 UTC | periodic, LLM-driven |
 
-**Interactive (request-time) jobs**: only `embed_query_task`. Everything
+**Interactive (request-time) jobs**: `embed_query_task` and (M10)
+`evaluate_and_register_source_task` — a user waits live for both. Everything
 else above is background/batch — nothing else is ever invoked synchronously
 from a web request (Architecture Principle 6: no LLM or heavy compute in a
 request's hot path; M9 extends this to ranking too, except for the
@@ -892,6 +933,21 @@ bug). Check `user_affinities`/`user_profile_vectors` have rows for that
 doing a literal keyword match, which can legitimately return nothing for a
 query with no exact keyword hits. If `true` and results are still empty,
 check `embeddings` actually has rows: `SELECT count(*) FROM embeddings;`.
+
+**STT fails** (`transcribe_video_task` errors, or `yt-dlp`/`ffmpeg` not found)
+→ `ffmpeg` must be on `PATH` (yt-dlp shells out to it for audio extraction) —
+`ffmpeg -version` should print a real version. First run downloads the
+`WHISPER_MODEL` (default `distil-large-v3`, ~1.5GB) from Hugging Face; expect
+a one-time delay. Check `stt_jobs.error_message` for the specific failure
+(`SttJobRepository.get_for_content(...)`) — a video that's genuinely
+unavailable/region-locked/deleted on YouTube will fail here, not silently.
+
+**New `templatetags/*.py` file throws `TemplateSyntaxError: 'X' is not a
+registered tag library`**
+→ The dev server was already running before the new file existed — Django's
+tag-library registry is built once at process startup and doesn't reliably
+pick up a brand-new templatetags module via the normal autoreloader. Restart
+the dev server. See buglog `web-014`.
 
 ---
 

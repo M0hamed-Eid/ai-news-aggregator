@@ -8,11 +8,13 @@ from sqlalchemy import (
     BigInteger,
     DateTime,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -25,7 +27,7 @@ class YoutubeVideo(Base):
     Why a separate table from Article?
     - YouTube content has video-specific fields (video_id, channel_name).
     - Keeping them separate makes queries and indexes more targeted.
-    - Future: you might store thumbnail_url, view_count, duration here.
+    - Future: you might store thumbnail_url, view_count here.
     """
 
     __tablename__ = "youtube_videos"
@@ -109,6 +111,22 @@ class YoutubeVideo(Base):
     )
 
     # -------------------------------------------------------------------------
+    # Deep Media (M12) — chunked chaptered summaries + STT fallback
+    # -------------------------------------------------------------------------
+    transcript_segments: Mapped[list | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        default=None,
+        comment="[{start, duration, text}, ...] — per-segment timing, same shape whether sourced from YouTube captions or STT (app/services/stt_service.py). NULL for videos scraped before M12 or still pending transcription (see stt_jobs).",
+    )
+    duration_seconds: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        default=None,
+        comment="Video length — derived from transcript_segments' last entry (captions) or yt-dlp metadata (STT). Drives both the STT duration ceiling and the long-video tier gate (run_pipeline.py's run_deep_video_phase).",
+    )
+
+    # -------------------------------------------------------------------------
     # Timestamps
     # -------------------------------------------------------------------------
     published_at: Mapped[datetime] = mapped_column(
@@ -161,6 +179,7 @@ class YoutubeVideo(Base):
             "source":       self.source,
             "summary":      self.summary,
             "tags":         self.tags,
+            "duration_seconds": self.duration_seconds,
             "published_at": self.published_at.isoformat() if self.published_at else None,
             "created_at":   self.created_at.isoformat()   if self.created_at   else None,
         }

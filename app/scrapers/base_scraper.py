@@ -28,6 +28,8 @@ class ScrapedArticle:
     published_at: datetime
     video_id: Optional[str] = None  # only relevant for YouTube videos
     image_url: Optional[str] = None  # hero image for articles; videos use their thumbnail instead
+    channel_id: Optional[str] = None  # YouTube channel id (UC...) — only relevant for YouTube videos
+    transcript_segments: Optional[list] = None  # M12: [{start, duration, text}, ...] — YouTube only; None means captions were unavailable (STT candidate)
 
 
 class BaseScraper(ABC):

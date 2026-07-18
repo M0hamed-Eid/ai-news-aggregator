@@ -1,9 +1,11 @@
 # app/database/seed_sources.py
 #
 # Backfills the Source Registry (app/database/models/source.py) with the 9
-# sources that used to be hardcoded in ScraperConfig (app/config.py). Idempotent
-# upsert-by-key — safe to re-run any time (e.g. after adding a new source row
-# here, or after editing an existing one's config).
+# sources that used to be hardcoded in ScraperConfig (app/config.py), plus
+# (M10) 2 registry-only rows for the legacy BlogScraper keys — see the
+# blog_openai/blog_anthropic entries below. Idempotent upsert-by-key — safe
+# to re-run any time (e.g. after adding a new source row here, or after
+# editing an existing one's config).
 #
 # Usage:
 #   python -m app.database.seed_sources
@@ -19,13 +21,43 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# The 9 seed rows
+# The 11 seed rows
 # =============================================================================
 # Each dict maps 1:1 onto Source's columns (minus id/timestamps/is_active,
-# which default to True/server-generated). Deliberately does NOT include
-# blog_openai/blog_anthropic — BlogScraper stays hardcoded/legacy.
+# which default to True/server-generated).
+#
+# blog_openai/blog_anthropic (M10): registry rows added purely so
+# Article.source's fk_articles_source FOREIGN KEY constraint (see
+# app/database/models/article.py) has something to point at — BlogScraper
+# itself remains fully hardcoded/legacy (run_pipeline.py's run_blogs_phase
+# instantiates it directly and never consults this table). adapter_type is
+# "rss" (NOT "scrape", despite BlogScraper actually using Playwright for
+# anthropic) deliberately: run_pipeline.py's _validate_source_handlers()
+# hard-fails the whole pipeline run for any active, non-"rss" row whose
+# handler isn't in HANDLER_BUILDERS, and these 2 rows have no handler by
+# design. "rss" is the only adapter_type exempt from that check, and since
+# their config has no "feeds" key, run_scraping_phases' RSS batch treats
+# them as contributing zero feeds — fully inert, never actually dispatched.
 
 SEED_SOURCES = [
+    {
+        "key": "blog_openai",
+        "name": "OpenAI Blog",
+        "category": "media",
+        "adapter_type": "rss",
+        "handler": None,
+        "config": {"note": "Registry row for FK integrity only — BlogScraper (hardcoded/legacy) does not read this row."},
+        "schedule_hours": 24,
+    },
+    {
+        "key": "blog_anthropic",
+        "name": "Anthropic Blog",
+        "category": "media",
+        "adapter_type": "rss",
+        "handler": None,
+        "config": {"note": "Registry row for FK integrity only — BlogScraper (hardcoded/legacy) does not read this row."},
+        "schedule_hours": 24,
+    },
     {
         "key": "arxiv",
         "name": "arXiv",

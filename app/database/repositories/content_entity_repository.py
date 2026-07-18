@@ -16,6 +16,19 @@ class ContentEntityRepository(BaseRepository[ContentEntity]):
         super().__init__(db, ContentEntity)
         self._entities = EntityRepository(db)
 
+    def get_content_for_entity(self, entity_id: int) -> List[Tuple[str, int]]:
+        """
+        Reverse lookup (M10): every (content_type, content_id) that mentions
+        this entity — "who's talking about this person/company/model".
+        Used for person-follow mention surfacing and any future
+        alert-style consumer.
+        """
+        return (
+            self.db.query(ContentEntity.content_type, ContentEntity.content_id)
+            .filter(ContentEntity.entity_id == entity_id)
+            .all()
+        )
+
     def replace_for_content(
         self, content_type: str, content_id: int, entities: List[Tuple[str, str]],
     ) -> int:

@@ -56,6 +56,67 @@ class SourceRepository(BaseRepository[Source]):
         )
 
     # =========================================================================
+    # User-submitted sources (M10)
+    # =========================================================================
+
+    def get_by_feed_url(self, feed_url: str) -> Optional[Source]:
+        """Canonicalization lookup — does a user-submitted source for this exact feed URL already exist?"""
+        return self.db.query(Source).filter(Source.feed_url == feed_url).first()
+
+    def count_created_by(self, user_id: int) -> int:
+        """How many sources this user has submitted — the per-user cap check reads this."""
+        return self.db.query(Source).filter(Source.created_by == user_id).count()
+
+    def get_user_sources(self) -> List[Source]:
+        """Every visibility='user' source, regardless of is_active — the monthly re-validation job reads this."""
+        return self.db.query(Source).filter(Source.visibility == "user").all()
+
+    def create_user_source(
+        self,
+        *,
+        key: str,
+        name: str,
+        category: str,
+        feed_url: str,
+        created_by: int,
+        schedule_hours: int,
+        validation_status: str,
+        validation_score: float,
+    ) -> Source:
+        """
+        Register a new user-submitted source, already past the relevance
+        gate (this method does not itself validate — see
+        app/services/relevance_gate.py, the only caller). One feed per row,
+        config['feeds'] holding exactly one feed-definition dict so the
+        existing run_scraping_phases() dispatch (which flattens every
+        adapter_type='rss' row's config['feeds'] into one RssFeedScraper
+        call) picks it up with zero changes.
+        """
+        source = Source(
+            key=key,
+            name=name,
+            category=category,
+            adapter_type="rss",
+            config={"feeds": [{"url": feed_url, "source": key, "label": name}]},
+            schedule_hours=schedule_hours,
+            is_active=True,
+            created_by=created_by,
+            visibility="user",
+            feed_url=feed_url,
+            validation_status=validation_status,
+            validation_score=validation_score,
+            validated_at=datetime.now(timezone.utc),
+        )
+        self.db.add(source)
+        self.db.commit()
+        self.db.refresh(source)
+        logger.info(
+            "SourceRepository: created user source id=%s key=%r feed_url=%r (created_by=%s, validation=%s/%.3f)",
+            source.id, key, feed_url, created_by, validation_status, validation_score,
+        )
+        return source
+
+    # =========================================================================
     # Run tracking
     # =========================================================================
 

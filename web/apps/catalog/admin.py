@@ -1,9 +1,9 @@
 from django.contrib import admin
 
 from .models import (
-    Article, ContentCluster, ContentClusterMember, ContentEnrichment, ContentEntity,
-    ContentScore, ContentTopic, DigestClickToken, DigestLog, Embedding, Entity, Source,
-    TaxonomyTopic, UserAffinity, UserRanking, YoutubeVideo,
+    Article, ContentChunk, ContentCluster, ContentClusterMember, ContentEnrichment, ContentEntity,
+    ContentScore, ContentTopic, DigestClickToken, DigestLog, Embedding, Entity,
+    PersonEntity, Source, SttJob, TaxonomyTopic, Trend, TrendReport, UserAffinity, UserRanking, YoutubeVideo,
 )
 
 
@@ -132,3 +132,37 @@ class ContentScoreAdmin(ReadOnlyAdmin):
 class EmbeddingAdmin(ReadOnlyAdmin):
     list_display = ("content_type", "content_id", "model_name", "created_at")
     list_filter = ("content_type", "model_name")
+
+
+@admin.register(PersonEntity)
+class PersonEntityAdmin(ReadOnlyAdmin):
+    list_display = ("entity", "footprint_type", "source", "external_identifier", "created_at")
+    list_filter = ("footprint_type",)
+    search_fields = ("entity__name", "external_identifier")
+
+
+@admin.register(Trend)
+class TrendAdmin(ReadOnlyAdmin):
+    list_display = ("dimension", "key", "date", "mention_count", "z_score", "is_trending")
+    list_filter = ("dimension", "is_trending")
+    search_fields = ("key",)
+    ordering = ("-date", "-z_score")
+
+
+@admin.register(TrendReport)
+class TrendReportAdmin(ReadOnlyAdmin):
+    list_display = ("week_start_date", "narrative_version", "llm_model", "generated_at")
+    ordering = ("-week_start_date",)
+
+
+@admin.register(ContentChunk)
+class ContentChunkAdmin(ReadOnlyAdmin):
+    list_display = ("content_type", "content_id", "chunk_index", "chapter_title", "start_seconds", "end_seconds")
+    list_filter = ("content_type",)
+    ordering = ("content_type", "content_id", "chunk_index")
+
+
+@admin.register(SttJob)
+class SttJobAdmin(ReadOnlyAdmin):
+    list_display = ("content_type", "content_id", "status", "transcript_source", "whisper_model", "requested_at")
+    list_filter = ("status", "transcript_source")

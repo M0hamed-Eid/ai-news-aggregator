@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     BigInteger,
-    CheckConstraint,
     DateTime,
+    ForeignKeyConstraint,
     Index,
     String,
     Text,
@@ -35,6 +35,15 @@ class Article(Base):
         "government_nist"    — NIST News RSS feed
         "funding_crunchbase" — Crunchbase News, AI section RSS feed
         "huggingface_model"  — Hugging Face Hub, newest models (JSON API)
+        ... plus any Source Registry row's key (app/database/models/source.py),
+        including M10 user-submitted (visibility='user') sources — see fk_articles_source below.
+
+    M10: `source` is a real FOREIGN KEY into sources.key, not a hardcoded
+    whitelist — a fixed CheckConstraint would have permanently blocked every
+    dynamically-created user-submitted source from ever inserting an article.
+    blog_openai/blog_anthropic have corresponding Source rows purely for this
+    FK's sake (see app/database/seed_sources.py) — BlogScraper itself remains
+    hardcoded/legacy and never reads those two rows.
     """
 
     __tablename__ = "articles"
@@ -138,14 +147,12 @@ class Article(Base):
     # Table-level constraints and indexes
     # -------------------------------------------------------------------------
     __table_args__ = (
-        # Enforce only known source values at the DB level.
-        CheckConstraint(
-            "source IN ("
-            "'blog_openai', 'blog_anthropic', 'arxiv', 'github_release', "
-            "'reddit', 'government_us', 'government_uk', 'government_nist', "
-            "'funding_crunchbase', 'huggingface_model'"
-            ")",
-            name="ck_articles_source",
+        # M10: real referential integrity against the Source Registry, replacing
+        # a hardcoded 10-value whitelist that silently blocked every new
+        # (including user-submitted) source's articles from ever inserting.
+        ForeignKeyConstraint(
+            ["source"], ["sources.key"],
+            name="fk_articles_source",
         ),
 
         # Speed up date-range queries (e.g. "articles from the last 7 days")

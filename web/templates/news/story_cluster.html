@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ anchor.title }} · All sources · AI Compass{% endblock %}
+{% block content %}
+
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{% url 'home' %}">Home</a></li>
+    <li class="breadcrumb-item active" aria-current="page">One story, all sources</li>
+  </ol>
+</nav>
+
+<h1 class="h3 app-section-title mb-1"><i class="bi bi-collection text-primary"></i> {{ anchor.title }}</h1>
+<p class="text-muted mb-4">
+  {% if members|length > 1 %}
+    Covered by {{ members|length }} source{{ members|length|pluralize }} — the same story, told across the corpus.
+  {% else %}
+    Not currently grouped with any other coverage.
+  {% endif %}
+</p>
+
+{% if members %}
+  <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
+    {% for item in members %}
+      {% if item.video_id %}
+        {% include "components/_video_card.html" with video=item is_saved=item.is_saved is_hidden=item.is_hidden topics=item.topics only %}
+      {% else %}
+        {% include "components/_article_card.html" with article=item is_saved=item.is_saved is_hidden=item.is_hidden topics=item.topics only %}
+      {% endif %}
+    {% endfor %}
+  </div>
+{% else %}
+  {% include "components/_empty_state.html" with icon="bi-collection" title="Not clustered yet" message="This item hasn't been grouped with anything else — clustering runs alongside every scrape and may not have processed it yet." %}
+{% endif %}
+
+{% endblock %}

@@ -189,3 +189,43 @@ class UserExclusion(models.Model):
 
     def __str__(self):
         return f"{self.profile.user.email} excludes {self.kind}:{self.value}"
+
+
+class UserSourceSubscription(models.Model):
+    """
+    A user's opt-IN to a `visibility='user'` (user-submitted) Source (M10).
+
+    This is the OPPOSITE polarity from UserExclusion: `visibility='global'`
+    sources (the 9 admin-seeded ones) stay on-by-default for everyone,
+    opt-out via UserExclusion, exactly as before M10. User-submitted
+    sources can't default to "everyone gets it" the same way — nobody
+    subscribed to a stranger's blog just because someone else added it —
+    so they need a real positive opt-in row instead. Submitting a new
+    source auto-creates a subscription for the submitter (see
+    apps.onboarding.views's add-source flow); anyone ELSE can subscribe to
+    an already-registered user-source via the same row shape, which is
+    exactly what makes "one global source, two subscriptions" (the
+    roadmap's own M10 success criterion) true.
+
+    `source` FKs into the read-only `catalog.Source` mirror
+    (db_constraint=False) purely for ORM ergonomics — same established
+    pattern as Interest.taxonomy_topic — since `sources` is SQLAlchemy/
+    pipeline-owned, not something Django migrates or writes.
+    """
+
+    profile = models.ForeignKey(
+        "accounts.UserProfile", on_delete=models.CASCADE, related_name="source_subscriptions",
+    )
+    source = models.ForeignKey(
+        "catalog.Source", db_constraint=False, on_delete=models.CASCADE, related_name="subscriptions",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "user_source_subscriptions"
+        constraints = [
+            models.UniqueConstraint(fields=["profile", "source"], name="uq_profile_source_subscription"),
+        ]
+
+    def __str__(self):
+        return f"{self.profile.user.email} subscribed to source_id={self.source_id}"

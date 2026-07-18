@@ -4,6 +4,80 @@
 <h1 class="h3 app-section-title mb-1"><i class="bi bi-collection text-primary"></i> Sources</h1>
 <p class="text-muted mb-4">Uncheck a category or source to exclude it from your feed and digest — changes apply on the next ranking run.</p>
 
+<div class="app-card p-4 mb-4">
+  <h2 class="h6 text-uppercase text-muted mb-3">Add your own source</h2>
+  <p class="text-muted small mb-3">Submit any AI-focused RSS/Atom feed. We check it's actually AI-relevant before adding it — off-topic feeds are rejected with a reason.</p>
+  <form method="post" action="{% url 'onboarding:add_source' %}" class="row g-2">
+    {% csrf_token %}
+    <div class="col-12 col-md-5">
+      <input type="url" name="feed_url" class="form-control" placeholder="Feed URL (RSS/Atom)" required>
+    </div>
+    <div class="col-12 col-md-3">
+      <input type="text" name="name" class="form-control" placeholder="Display name" required>
+    </div>
+    <div class="col-8 col-md-3">
+      <select name="category" class="form-select">
+        {% for key, label in categories %}
+          <option value="{{ key }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-4 col-md-1">
+      <button type="submit" class="btn btn-primary w-100"><i class="bi bi-plus-lg"></i></button>
+    </div>
+  </form>
+</div>
+
+{% if my_sources %}
+  <div class="app-card p-4 mb-4">
+    <h2 class="h6 text-uppercase text-muted mb-3">Sources you've submitted</h2>
+    <div class="table-responsive">
+      <table class="table align-middle mb-0">
+        <thead><tr><th>Name</th><th>Category</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for source in my_sources %}
+            <tr>
+              <td class="fw-semibold">{{ source.name }}</td>
+              <td><span class="badge badge-category">{{ source.category_label }}</span></td>
+              <td>
+                {% if source.validation_status == "accepted" %}
+                  <span class="badge text-bg-success-subtle text-success-emphasis"><i class="bi bi-check-circle"></i> Accepted</span>
+                {% elif source.validation_status == "accepted_low_trust" %}
+                  <span class="badge text-bg-warning-subtle text-warning-emphasis"><i class="bi bi-exclamation-circle"></i> Accepted (low confidence)</span>
+                {% elif source.validation_status == "rejected" %}
+                  <span class="badge text-bg-danger-subtle text-danger-emphasis"><i class="bi bi-x-circle"></i> Rejected</span>
+                {% else %}
+                  <span class="badge text-bg-secondary">Pending</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endif %}
+
+{% if my_subscriptions %}
+  <div class="app-card p-4 mb-4">
+    <h2 class="h6 text-uppercase text-muted mb-3">Your subscriptions</h2>
+    <p class="text-muted small mb-3">Custom sources (yours or another user's) that feed into your feed and digest.</p>
+    <div class="d-flex flex-wrap gap-2">
+      {% for sub in my_subscriptions %}
+        <span class="app-chip active">
+          {{ sub.source.name }}
+          <form method="post" action="{% url 'onboarding:unsubscribe_source' sub.source_id %}" class="d-inline ms-1">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-link text-danger p-0" title="Unsubscribe" aria-label="Unsubscribe from {{ sub.source.name }}">
+              <i class="bi bi-x-lg"></i>
+            </button>
+          </form>
+        </span>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}
+
 <form method="get" class="row g-2 mb-4">
   <div class="col-md-6">
     <input type="search" name="q" class="form-control" placeholder="Search sources…" value="{{ q }}">

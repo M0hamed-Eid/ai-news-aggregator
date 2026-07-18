@@ -2,7 +2,11 @@
 #
 # Main entry point for the full data pipeline.
 #
-# Phase 1 — scrape YouTube + blogs + Source-Registry-driven sources → insert into PostgreSQL
+# Phase 1 — scrape YouTube + blogs + Source-Registry-driven sources → insert into PostgreSQL.
+#           M10: visibility='user' (user-submitted) sources have their schedule_hours
+#           floor ACTUALLY enforced here (_due_for_scraping()) — skipped if not yet
+#           due. The 9 curated (visibility='global') sources' every-run behavior is
+#           unchanged; schedule_hours remains metadata-only for them.
 # Phase 2 — enrich content (EnrichmentAgent: summary + M8 structured fields) for unenriched records
 # Phase 3 — build + send email from each recipient's CURRENT ranking (EmailAgent) — ranking
 #           itself is computed separately, on its own schedule (app/tasks/ranking_tasks.py,
@@ -117,6 +121,15 @@ class PipelineResult:
     scoring_scored: int = 0
     scoring_errors: int = 0
 
+    trend_dimensions_computed: int = 0
+    trend_topics_trending: int = 0
+    trend_entities_trending: int = 0
+
+    stt_dispatched: int = 0
+
+    deep_video_processed: int = 0
+    deep_video_errors: int = 0
+
     def print_summary(self) -> None:
         logger.info("=" * 60)
         logger.info("PIPELINE SUMMARY")
@@ -158,6 +171,18 @@ class PipelineResult:
                 "  Scoring  : scored=%4d  errors=%4d",
                 self.scoring_scored, self.scoring_errors,
             )
+        if self.trend_dimensions_computed:
+            logger.info(
+                "  Trends   : %4d dimension(s) computed  %4d topic(s) trending  %4d entit(y/ies) trending",
+                self.trend_dimensions_computed, self.trend_topics_trending, self.trend_entities_trending,
+            )
+        if self.stt_dispatched:
+            logger.info("  STT      : %4d job(s) dispatched to the stt queue", self.stt_dispatched)
+        if self.deep_video_processed or self.deep_video_errors:
+            logger.info(
+                "  DeepVideo: processed=%4d  errors=%4d",
+                self.deep_video_processed, self.deep_video_errors,
+            )
         logger.info("=" * 60)
 
 
@@ -171,7 +196,11 @@ def _validate_scraped_article(item) -> List[str]:
         errors.append("missing title")
     if not item.url or not item.url.startswith("http"):
         errors.append(f"invalid url: {item.url!r}")
-    if not item.content or len(item.content.strip()) < 50:
+    # M12: a YouTube item (video_id set) with no content is a caption-less
+    # video queued for STT (app/tasks/stt_tasks.py) — not invalid. Every
+    # other source (blogs, arxiv, etc.) still requires real content.
+    is_youtube_stub = getattr(item, "video_id", None) and not item.content
+    if not is_youtube_stub and (not item.content or len(item.content.strip()) < 50):
         errors.append("content too short (< 50 chars)")
     if item.published_at is None:
         errors.append("missing published_at")
@@ -351,6 +380,33 @@ def _validate_source_handlers(sources) -> None:
             )
 
 
+def _due_for_scraping(source) -> bool:
+    """
+    Fetch-frequency floor enforcement (M10) — scoped to visibility='user'
+    sources ONLY. The 9 admin-seeded (visibility='global') sources keep
+    their existing behavior of scraping on EVERY pipeline run regardless of
+    schedule_hours, exactly as before M10 — schedule_hours has always been
+    "metadata only, not a real background scheduler" for them (see
+    app/database/models/source.py), and there is no reason to change
+    already-working, already-tested behavior for the curated registry.
+
+    User-submitted sources are different: schedule_hours is the abuse-
+    control floor set at submission time (app/tasks/source_submission_tasks.py,
+    MIN_USER_SOURCE_SCHEDULE_HOURS), and it needs to actually mean
+    something, or "fetch-frequency floors" (an explicit M10 Core
+    requirement) would be pure fiction. A user source with no last_run_at
+    yet (never scraped) is always due.
+    """
+    if getattr(source, "visibility", "global") != "user":
+        return True
+    if source.last_run_at is None:
+        return True
+    if not source.schedule_hours:
+        return True
+    from datetime import datetime, timedelta, timezone as dt_timezone
+    return datetime.now(dt_timezone.utc) - source.last_run_at >= timedelta(hours=source.schedule_hours)
+
+
 def run_scraping_phases(
     source_filter: str, hours: int, dry_run: bool, result: PipelineResult
 ) -> None:
@@ -400,6 +456,16 @@ def run_scraping_phases(
         else:
             sources = source_repo.get_active_by_keys([source_filter])
 
+        # M10 fetch-frequency floor — visibility='user' sources only, see
+        # _due_for_scraping()'s own docstring for why global sources are untouched.
+        skipped_not_due = [s.key for s in sources if not _due_for_scraping(s)]
+        sources = [s for s in sources if _due_for_scraping(s)]
+        if skipped_not_due:
+            logger.info(
+                "run_scraping_phases: skipping %d user source(s) not yet due for their schedule_hours floor: %s",
+                len(skipped_not_due), skipped_not_due,
+            )
+
         # Pull out plain data before the session closes — each phase call
         # below opens its OWN get_db_session() for the actual insert, and ORM
         # objects shouldn't be used past their session's lifetime.
@@ -428,6 +494,44 @@ def run_scraping_phases(
             source_repo = SourceRepository(db)
             for source_id, success in attempts:
                 source_repo.mark_run(source_id, success=success)
+
+
+def run_stt_dispatch_phase(result: PipelineResult) -> None:
+    """
+    M12 — claims queued stt_jobs rows (queued -> running) and dispatches
+    transcribe_video_task on the dedicated "stt" queue (app/celery_app.py).
+    Runs in its OWN get_db_session() AFTER run_scraping_phases' transactions
+    have already committed, so a job is only ever claimed once its
+    youtube_videos/stt_jobs rows are safely visible on every connection —
+    this is what avoids racing YoutubeRepository.bulk_create's
+    commit-on-exit (dispatching from inside that transaction would risk the
+    stt worker looking up a row before it's committed).
+
+    Cheap and synchronous — this only enqueues Celery messages, it does NOT
+    wait for transcription (that happens asynchronously on the stt worker,
+    which per docs/ROADMAP.md should run from a residential-IP host). A
+    caption-less video's content lands on a LATER pipeline pass once its
+    async STT task completes — get_unenriched() then picks it up
+    automatically, with zero special-casing (M12 success criterion 2).
+    """
+    from app.database import get_db_session
+    from app.database.repositories.stt_job_repository import SttJobRepository
+    from app.tasks.stt_tasks import transcribe_video_task
+
+    logger.info("[STT] Starting dispatch phase")
+
+    with get_db_session() as db:
+        stt_repo = SttJobRepository(db)
+        queued_jobs = stt_repo.get_queued(limit=20)
+        claimed = [(job.content_type, job.content_id) for job in queued_jobs]
+        for content_type, content_id in claimed:
+            stt_repo.upsert_status(content_type=content_type, content_id=content_id, status="running")
+
+    for _content_type, content_id in claimed:
+        transcribe_video_task.delay(content_id=content_id)
+        result.stt_dispatched += 1
+
+    logger.info("[STT] Dispatched %d job(s) to the stt queue", len(claimed))
 
 
 def run_embedding_phase(result: PipelineResult) -> None:
@@ -656,6 +760,135 @@ def run_scoring_phase(result: PipelineResult) -> None:
     result.scoring_errors = errors
 
 
+def run_trend_computation_phase(result: PipelineResult) -> None:
+    """
+    Burst detection (M11) — deliberately LLM-free, pure SQL/statistics. Runs
+    as the 6th phase of the existing 6-hourly pipeline chain rather than a
+    standalone daily schedule: nothing else in this codebase chains tasks by
+    completion signal (only fixed clock offsets with a "generous buffer",
+    e.g. the 3:00/3:15 nightly jobs assuming the midnight pipeline finished)
+    — a new phase here avoids inventing that same guess, and recomputing
+    "today"'s row up to 4x/day (once per 6-hourly run) keeps the Home
+    Trending module from going stale for up to 19 hours the way a fixed
+    once-daily job would.
+
+    For every (dimension, key) pair — every active TaxonomyTopic slug, and
+    every entity_id ever mentioned in content_entities — computes TODAY's
+    UTC mention count, compares it to a 30-day trailing baseline read back
+    from already-persisted `trends` rows (never recomputed), and flags
+    is_trending via a z-score threshold. Two guards directly address the
+    roadmap's own named risk ("false positives on low-volume topics"): a
+    brand-new topic/entity has no baseline history and structurally cannot
+    trend on day 1.
+    """
+    import statistics
+    from collections import defaultdict
+    from datetime import datetime, timedelta, timezone
+
+    from app.database import get_db_session
+    from app.database.models.article import Article
+    from app.database.models.content_entity import ContentEntity
+    from app.database.models.content_topic import ContentTopic
+    from app.database.models.taxonomy_topic import TaxonomyTopic
+    from app.database.models.youtube_video import YoutubeVideo
+    from app.database.repositories.taxonomy_topic_repository import TaxonomyTopicRepository
+    from app.database.repositories.trend_repository import TrendRepository
+
+    MIN_MENTIONS_TODAY = 3
+    MIN_BASELINE_DAYS_WITH_DATA = 5   # of the trailing 30 days, how many must have >=1 mention
+    MIN_STDDEV_FLOOR = 1.0            # prevents divide-by-near-zero for a perfectly flat metric
+    Z_THRESHOLD = 2.0
+    BASELINE_WINDOW_DAYS = 30
+
+    logger.info("[Trends] Starting burst-detection phase")
+
+    today = datetime.now(timezone.utc).date()
+    baseline_start = today - timedelta(days=BASELINE_WINDOW_DAYS)
+    baseline_end = today - timedelta(days=1)
+    # Anything published before the baseline window is irrelevant to today's
+    # count or the 30-day baseline — no need to load the whole corpus.
+    window_start_dt = datetime.combine(baseline_start, datetime.min.time(), tzinfo=timezone.utc)
+
+    dimensions_computed = topics_trending = entities_trending = 0
+
+    with get_db_session() as db:
+        trend_repo = TrendRepository(db)
+
+        recent_article_dates = {
+            aid: pub.date() for aid, pub in db.query(Article.id, Article.published_at)
+            .filter(Article.published_at >= window_start_dt).all()
+        }
+        recent_video_dates = {
+            vid: pub.date() for vid, pub in db.query(YoutubeVideo.id, YoutubeVideo.published_at)
+            .filter(YoutubeVideo.published_at >= window_start_dt).all()
+        }
+
+        def _today_counts(rows) -> dict:
+            """rows: iterable of (dimension_key, content_type, content_id) -> {key: today_mention_count}."""
+            counts: dict = defaultdict(int)
+            for dim_key, content_type, content_id in rows:
+                pub_date = (
+                    recent_article_dates.get(content_id) if content_type == "article"
+                    else recent_video_dates.get(content_id)
+                )
+                if pub_date == today:
+                    counts[dim_key] += 1
+            return counts
+
+        topic_today = _today_counts(
+            # Joined to TaxonomyTopic so dim_key is the SLUG (a string) —
+            # _compute_and_upsert looks topics up by slug (get_active_slugs()),
+            # not by the raw integer taxonomy_topic_id ContentTopic itself stores.
+            db.query(TaxonomyTopic.slug, ContentTopic.content_type, ContentTopic.content_id)
+            .join(TaxonomyTopic, ContentTopic.taxonomy_topic_id == TaxonomyTopic.id)
+            .all()
+        )
+        entity_today = _today_counts(
+            db.query(ContentEntity.entity_id, ContentEntity.content_type, ContentEntity.content_id).all()
+        )
+
+        def _compute_and_upsert(dimension: str, key: str, today_count: int) -> bool:
+            history = trend_repo.get_history(dimension, key, baseline_start, baseline_end)
+            nonzero_days = sum(1 for h in history if h.mention_count > 0)
+
+            if today_count < MIN_MENTIONS_TODAY or nonzero_days < MIN_BASELINE_DAYS_WITH_DATA:
+                baseline_mean = statistics.fmean(h.mention_count for h in history) if history else 0.0
+                baseline_stddev = statistics.pstdev(h.mention_count for h in history) if len(history) > 1 else 0.0
+                z_score, is_trending = None, False
+            else:
+                counts = [h.mention_count for h in history]
+                baseline_mean = statistics.fmean(counts)
+                baseline_stddev = statistics.pstdev(counts)
+                effective_stddev = max(baseline_stddev, MIN_STDDEV_FLOOR)
+                z_score = (today_count - baseline_mean) / effective_stddev
+                is_trending = z_score >= Z_THRESHOLD
+
+            trend_repo.upsert_daily(
+                dimension=dimension, key=key, date=today, mention_count=today_count,
+                baseline_mean=baseline_mean, baseline_stddev=baseline_stddev,
+                z_score=z_score, is_trending=is_trending,
+            )
+            return is_trending
+
+        for slug in TaxonomyTopicRepository(db).get_active_slugs():
+            if _compute_and_upsert("topic", slug, topic_today.get(slug, 0)):
+                topics_trending += 1
+            dimensions_computed += 1
+
+        for entity_id in trend_repo.get_mentioned_entity_ids():
+            if _compute_and_upsert("entity", str(entity_id), entity_today.get(entity_id, 0)):
+                entities_trending += 1
+            dimensions_computed += 1
+
+    logger.info(
+        "[Trends] Done. %d dimension(s) computed, %d topic(s) trending, %d entity(ies) trending",
+        dimensions_computed, topics_trending, entities_trending,
+    )
+    result.trend_dimensions_computed = dimensions_computed
+    result.trend_topics_trending = topics_trending
+    result.trend_entities_trending = entities_trending
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Phase 2+3 runner — digest + email
 # ─────────────────────────────────────────────────────────────────────────────
@@ -754,6 +987,186 @@ def run_digest_phase(
                     logger.error("[Digest] Failed to log digest send for user_id=%s — %s", recipient.user_id, exc)
         else:
             logger.warning("[Digest] Email delivery failed for %s — check logs above.", to_address)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deep Media (M12) — chunking + map-reduce hierarchical summarization
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 20 minutes — splits "tutorials often <15min" from "talks/podcasts often
+# 20-90+min". Below this, today's single-pass enrichment is unchanged and
+# available to everyone; at/above it, a video gets chaptered chunks (this
+# phase) PLUS a richer reduce-step enrichment pass. Computed globally for
+# every qualifying video regardless of any viewer's plan (Architecture
+# Principle 1 — "ingest once, personalize later... never per-user"); only
+# the SERVING layer gates the chaptered UI behind Pro (see
+# web/apps/news/views.py::VideoDetailView, which duplicates this exact value
+# with a cross-reference comment — the two-ORM split means it can't be
+# imported directly from here).
+LONG_VIDEO_THRESHOLD_SECONDS = 1200
+
+# ~10 minutes per chunk, snapped to segment boundaries (never split
+# mid-segment). A trailing sliver under this many seconds merges into the
+# previous chunk instead of standing alone as a near-empty final "chapter".
+CHUNK_TARGET_SECONDS = 600
+CHUNK_TRAILING_MERGE_SECONDS = 90
+
+
+def _build_transcript_chunks(segments: List[dict]) -> List[Tuple[float, float, List[dict]]]:
+    """
+    Groups transcript_segments into ~CHUNK_TARGET_SECONDS-long chunks.
+    Returns [(start_seconds, end_seconds, segment_list), ...] in order.
+    """
+    if not segments:
+        return []
+
+    chunks: List[Tuple[float, float, List[dict]]] = []
+    current: List[dict] = []
+    chunk_start = segments[0]["start"]
+
+    for seg in segments:
+        if not current:
+            chunk_start = seg["start"]
+        current.append(seg)
+        seg_end = seg["start"] + seg["duration"]
+        if seg_end - chunk_start >= CHUNK_TARGET_SECONDS:
+            chunks.append((chunk_start, seg_end, current))
+            current = []
+
+    if current:
+        tail_start = current[0]["start"]
+        tail_end = current[-1]["start"] + current[-1]["duration"]
+        if chunks and (tail_end - tail_start) < CHUNK_TRAILING_MERGE_SECONDS:
+            prev_start, _prev_end, prev_segments = chunks[-1]
+            chunks[-1] = (prev_start, tail_end, prev_segments + current)
+        else:
+            chunks.append((tail_start, tail_end, current))
+
+    return chunks
+
+
+def run_deep_video_phase(result: PipelineResult) -> None:
+    """
+    M12 success criterion 1: a long video gets a chaptered summary with
+    working timestamp deep-links. For every video at/above
+    LONG_VIDEO_THRESHOLD_SECONDS with transcript_segments but no
+    content_chunks yet:
+
+      1. MAP — chunk transcript_segments (~10min each) and summarize each
+         chunk via ChunkSummaryAgent into a {chapter_title, summary}.
+      2. REDUCE — re-run the EXISTING EnrichmentAgent.generate(), fed the
+         concatenated chunk summaries (prefixed with their [start-end]
+         timestamps) instead of video.content. This incidentally fixes a
+         real pre-existing gap: EnrichmentAgent truncates all content to
+         content[:10_000] chars, so a 2-hour video's normal single-pass
+         enrichment (run_digest_phase, above) only ever saw its first ~10k
+         characters. Chunk summaries comfortably fit in one call regardless
+         of video length, so long videos get a STRICTLY BETTER enrichment
+         after this phase, not just chapters.
+
+    Reuses DigestService._persist_enrichment/_reembed directly (same 3
+    tables + re-embed every other enrichment call writes through) rather
+    than duplicating that persistence logic — this phase's enrichment
+    output is a second, later, better pass over the SAME row, not a
+    different kind of write.
+
+    Runs as an additional phase in the existing 6-hourly chain (matches
+    M11's own "don't invent a new schedule" reasoning for run_trend_
+    computation_phase) rather than a standalone job, right after
+    run_digest_phase so it upgrades the normal single-pass enrichment
+    run_digest_phase just wrote, and before clustering so clustering works
+    off the upgraded embedding too.
+    """
+    from app.agents.chunk_summary_agent import CHUNK_SUMMARY_VERSION, ChunkSummaryAgent
+    from app.agents.enrichment_agent import EnrichmentAgent
+    from app.config import config
+    from app.database import get_db_session
+    from app.database.models.youtube_video import YoutubeVideo
+    from app.database.repositories.content_chunk_repository import ContentChunkRepository
+    from app.database.repositories.taxonomy_topic_repository import TaxonomyTopicRepository
+    from app.database.repositories.youtube_repository import YoutubeRepository
+    from app.services.digest_service import DigestService
+
+    logger.info("[DeepVideo] Starting chunking + map-reduce phase")
+
+    with get_db_session() as db:
+        chunk_repo = ContentChunkRepository(db)
+        candidates = (
+            db.query(YoutubeVideo)
+            .filter(YoutubeVideo.duration_seconds.isnot(None))
+            .filter(YoutubeVideo.duration_seconds >= LONG_VIDEO_THRESHOLD_SECONDS)
+            .filter(YoutubeVideo.transcript_segments.isnot(None))
+            .all()
+        )
+        video_data = [
+            (v.id, v.title, v.transcript_segments)
+            for v in candidates
+            if not chunk_repo.has_chunks("youtube_video", v.id)
+        ]
+        allowed_topics = TaxonomyTopicRepository(db).get_active_slugs()
+
+    if not video_data:
+        logger.info("[DeepVideo] Nothing to process")
+        return
+
+    chunk_agent = ChunkSummaryAgent()
+    enrichment_agent = EnrichmentAgent(allowed_topics=allowed_topics)
+    digest_service = DigestService(config=config)  # only used for its _persist_enrichment/_reembed helpers
+
+    processed = errors = 0
+    for video_id, title, segments in video_data:
+        try:
+            chunks = _build_transcript_chunks(segments)
+            if not chunks:
+                continue
+
+            chunk_rows: List[Tuple[float, float, str, str]] = []
+            summary_blurbs = []
+            for start, end, seg_list in chunks:
+                chunk_text = " ".join(s["text"] for s in seg_list)
+                chunk_summary = chunk_agent.generate(title, chunk_text)
+                if chunk_summary is None:
+                    logger.warning(
+                        "[DeepVideo] Chunk summary failed for video id=%d [%ds-%ds] — skipping chunk",
+                        video_id, start, end,
+                    )
+                    continue
+                chunk_rows.append((start, end, chunk_summary.chapter_title, chunk_summary.summary))
+                summary_blurbs.append(f"[{int(start)}s-{int(end)}s] {chunk_summary.chapter_title}: {chunk_summary.summary}")
+
+            if not chunk_rows:
+                logger.warning("[DeepVideo] All chunks failed for video id=%d — skipping", video_id)
+                errors += 1
+                continue
+
+            enrichment_output = enrichment_agent.generate(
+                title=title,
+                content="\n\n".join(summary_blurbs),
+                article_type="chaptered YouTube video",
+            )
+
+            with get_db_session() as db:
+                ContentChunkRepository(db).replace_for_content(
+                    content_type="youtube_video", content_id=video_id,
+                    chunks=chunk_rows, summary_version=CHUNK_SUMMARY_VERSION,
+                )
+                if enrichment_output is not None:
+                    YoutubeRepository(db).update_summary(video_id, enrichment_output.summary)
+                    digest_service._persist_enrichment(db, "youtube_video", video_id, enrichment_output)
+                    digest_service._reembed(db, "youtube_video", video_id, enrichment_output.summary)
+                else:
+                    logger.warning(
+                        "[DeepVideo] Reduce-step enrichment failed for video id=%d — chunks saved, enrichment unchanged",
+                        video_id,
+                    )
+            processed += 1
+        except Exception:
+            logger.exception("[DeepVideo] Error processing video id=%d", video_id)
+            errors += 1
+
+    result.deep_video_processed = processed
+    result.deep_video_errors = errors
+    logger.info("[DeepVideo] Done. processed=%d errors=%d", processed, errors)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -885,6 +1298,14 @@ Examples:
     else:
         run_scraping_phases(args.source, args.hours, args.dry_run, result)
 
+    # ── Step 2.5: STT dispatch (M12) ──────────────────────────────────────
+    # Drains any queued stt_jobs (this run's caption-less stubs, plus any
+    # left over from a previous run) onto the dedicated "stt" queue.
+    if not args.dry_run:
+        run_stt_dispatch_phase(result)
+    else:
+        logger.info("[STT] Skipped (dry-run mode)")
+
     # ── Step 3: embedding (Phase 1.5) ─────────────────────────────────────
     if not args.dry_run:
         logger.info("[Embedding] Starting embedding phase")
@@ -903,6 +1324,15 @@ Examples:
     else:
         run_digest_phase(args.hours, args.dry_run, args.skip_email, result)
 
+    # ── Step 3.2: deep video chunking + map-reduce (M12) ──────────────────
+    # After digest/enrichment (upgrades the normal single-pass enrichment
+    # run_digest_phase just wrote for long videos) and before clustering
+    # (so clustering works off the upgraded embedding too).
+    if not args.dry_run:
+        run_deep_video_phase(result)
+    else:
+        logger.info("[DeepVideo] Skipped (dry-run mode)")
+
     # ── Step 3.5: clustering + quality scoring (M8) ───────────────────────
     # Run AFTER digest/enrichment so clustering works off the freshest
     # (post-enrichment) embeddings, and scoring can read the enrichment/
@@ -910,8 +1340,9 @@ Examples:
     if not args.dry_run:
         run_clustering_phase(result)
         run_scoring_phase(result)
+        run_trend_computation_phase(result)
     else:
-        logger.info("[Clustering/Scoring] Skipped (dry-run mode)")
+        logger.info("[Clustering/Scoring/Trends] Skipped (dry-run mode)")
 
     # ── Step 4: print summary ─────────────────────────────────────────────
     result.print_summary()

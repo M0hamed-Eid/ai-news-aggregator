@@ -16,9 +16,18 @@ from django.utils import timezone
 from .models import User
 
 FEATURE_PLANS: dict[str, set[str]] = {
-    # populated by later milestones, e.g.:
-    # "unlimited_custom_sources": {User.Plan.PRO},
-    # "deep_video_summaries": {User.Plan.PRO},
+    # M10 — Free accounts cap at FREE_CUSTOM_SOURCE_LIMIT (see
+    # apps.onboarding.source_submission); Pro is unlimited. Matches the
+    # roadmap's own M13 Free-vs-Pro table ("Custom sources | 3 | Unlimited").
+    "unlimited_custom_sources": {User.Plan.PRO},
+    # M11 — the weekly grounded trend narrative (/insights/) is the first
+    # full-page Pro gate in this app (see web/apps/news/views.py::TrendReportView).
+    "trend_narrative": {User.Plan.PRO},
+    # M12 — chaptered/deep summaries for long-form video (see
+    # web/apps/news/views.py::VideoDetailView). Gates the UI section only —
+    # chunking/chaptering is computed for every qualifying video regardless
+    # of any viewer's plan (Architecture Principle 1).
+    "deep_video_summaries": {User.Plan.PRO},
 }
 
 

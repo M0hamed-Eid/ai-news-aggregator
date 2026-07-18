@@ -66,7 +66,7 @@ class YouTubeScraper(BaseScraper):
  
     def scrape(self, hours_lookback: int) -> List[ScrapedArticle]:
         all_articles = []
- 
+
         for channel in self.channels:
             logger.info(f"Scraping channel: {channel['name']}")
             videos = self._fetch_recent_videos(
@@ -75,24 +75,30 @@ class YouTubeScraper(BaseScraper):
                 hours_lookback=hours_lookback,
             )
             logger.info(f"  Found {len(videos)} recent videos")
- 
+
             for video in videos:
                 self._sleep()  # polite delay before each transcript request
-                transcript = self._fetch_transcript(video["video_id"])
- 
-                if transcript:
-                    all_articles.append(ScrapedArticle(
-                        title=video["title"],
-                        url=video["url"],
-                        content=transcript,
-                        source=self.source_name,
-                        channel_or_author=channel["name"],
-                        published_at=video["published_at"],
-                        video_id=video["video_id"],
-                    ))
-                else:
-                    logger.warning(f"  No transcript for: {video['title']}")
- 
+                transcript, segments = self._fetch_transcript(video["video_id"])
+
+                # M12: a video whose captions are disabled/unavailable is no
+                # longer dropped — it's inserted as a content-less stub so the
+                # STT fallback chain (app/tasks/stt_tasks.py) has a row to
+                # attach a transcript to later. See YoutubeRepository.bulk_create
+                # for the stt_jobs bookkeeping this triggers.
+                all_articles.append(ScrapedArticle(
+                    title=video["title"],
+                    url=video["url"],
+                    content=transcript,
+                    source=self.source_name,
+                    channel_or_author=channel["name"],
+                    published_at=video["published_at"],
+                    video_id=video["video_id"],
+                    channel_id=channel["channel_id"],
+                    transcript_segments=segments or None,
+                ))
+                if not transcript:
+                    logger.warning(f"  No transcript for: {video['title']} — queuing for STT")
+
         logger.info(f"YouTube scraper finished. Total articles: {len(all_articles)}")
         return all_articles
  
@@ -126,11 +132,19 @@ class YouTubeScraper(BaseScraper):
  
         return recent_videos
  
-    def _fetch_transcript(self, video_id: str) -> str:
+    def _fetch_transcript(self, video_id: str) -> tuple[str, list]:
+        """
+        Returns (full_text, segments). segments is
+        [{"start": float, "duration": float, "text": str}, ...] — the same
+        shape STT (app/services/stt_service.py, M12) produces, so downstream
+        code (chunking, duration derivation) doesn't care which path a video's
+        transcript came from. On any failure both are empty — the caller
+        treats that as "captions unavailable, queue for STT".
+        """
         try:
             # Use self._ytt_api which was already created with the proxy in __init__
             transcript_list = self._ytt_api.list(video_id)
- 
+
             try:
                 transcript = transcript_list.find_manually_created_transcript(["en"])
             except NoTranscriptFound:
@@ -140,22 +154,26 @@ class YouTubeScraper(BaseScraper):
                     transcript = transcript_list.find_generated_transcript(
                         transcript_list._generated_transcripts.keys()
                     ).translate("en")
- 
-            raw_data  = transcript.fetch()
-            full_text = " ".join(segment.text.strip() for segment in raw_data)
- 
+
+            raw_data = transcript.fetch()
+            segments = [
+                {"start": seg.start, "duration": seg.duration, "text": seg.text.strip()}
+                for seg in raw_data
+            ]
+            full_text = " ".join(seg["text"] for seg in segments)
+
             if self.max_transcript_chars and len(full_text) > self.max_transcript_chars:
                 full_text = full_text[:self.max_transcript_chars] + "... [transcript truncated]"
- 
-            return full_text
- 
+
+            return full_text, segments
+
         except TranscriptsDisabled:
             logger.warning(f"Transcripts disabled for video: {video_id}")
         except NoTranscriptFound:
             logger.warning(f"No transcript found for video: {video_id}")
         except Exception as e:
             logger.error(f"Unexpected error fetching transcript for {video_id}: {e}")
-        return ""
+        return "", []
  
     def _sleep(self):
         time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))

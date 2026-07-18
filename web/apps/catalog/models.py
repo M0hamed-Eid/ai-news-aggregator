@@ -88,6 +88,8 @@ class YoutubeVideo(ReadOnly, models.Model):
     content = models.TextField(null=True, blank=True)
     summary = models.TextField(null=True, blank=True)
     tags = models.CharField(max_length=1000, null=True, blank=True)
+    transcript_segments = models.JSONField(null=True, blank=True)
+    duration_seconds = models.IntegerField(null=True, blank=True)
     published_at = models.DateTimeField()
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField()
@@ -135,6 +137,16 @@ class Source(ReadOnly, models.Model):
     last_success_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField()
+
+    # User-submitted sources (M10) — created_by is a plain int (Django's own
+    # users.id), not a FK, since this table is pipeline-owned and doesn't
+    # know about Django's user table at the SQLAlchemy-model level either.
+    created_by = models.BigIntegerField(null=True, blank=True)
+    visibility = models.CharField(max_length=20, default="global")
+    feed_url = models.CharField(max_length=2048, null=True, blank=True)
+    validation_status = models.CharField(max_length=20, null=True, blank=True)
+    validation_score = models.FloatField(null=True, blank=True)
+    validated_at = models.DateTimeField(null=True, blank=True)
 
     CATEGORY_LABELS = {
         "research": "Research",
@@ -517,3 +529,139 @@ class Embedding(ReadOnly, models.Model):
 
     def __str__(self):
         return f"{self.content_type}:{self.content_id}"
+
+
+class PersonEntity(ReadOnly, models.Model):
+    """
+    Links a person Entity to their own scrapeable footprint (table:
+    person_entities, M10) — written by the pipeline once a footprint is
+    registered/validated, read-only here. `source` resolves to the actual
+    Source Registry row being scraped for this footprint (null until
+    registered).
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    entity = models.ForeignKey(
+        Entity, db_constraint=False, on_delete=models.DO_NOTHING, related_name="footprints",
+    )
+    footprint_type = models.CharField(max_length=20)
+    source = models.ForeignKey(
+        "Source", db_constraint=False, on_delete=models.DO_NOTHING, null=True, blank=True,
+        related_name="person_footprint",
+    )
+    external_identifier = models.CharField(max_length=500, null=True, blank=True)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "person_entities"
+        verbose_name = "person entity"
+        verbose_name_plural = "person entities"
+
+    def __str__(self):
+        return f"{self.entity.name} ({self.footprint_type})"
+
+
+class Trend(ReadOnly, models.Model):
+    """
+    Daily burst-detection row (table: trends, M11) — one per (dimension, key,
+    date). Written by run_pipeline.py's run_trend_computation_phase(); this
+    same table serves both the Home Trending module (today's is_trending=True
+    rows) and an entity page's mention timeline (filter dimension='entity',
+    key=str(entity_id)) — deliberately the only table for this, see the
+    SQLAlchemy model's own docstring for why a second "materialized" table
+    would be redundant.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    dimension = models.CharField(max_length=20)
+    key = models.CharField(max_length=200)
+    date = models.DateField()
+    mention_count = models.IntegerField()
+    baseline_mean = models.FloatField()
+    baseline_stddev = models.FloatField()
+    z_score = models.FloatField(null=True, blank=True)
+    is_trending = models.BooleanField()
+    computed_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "trends"
+        ordering = ["-date", "-z_score"]
+        verbose_name = "trend"
+        verbose_name_plural = "trends"
+
+    def __str__(self):
+        return f"{self.dimension}:{self.key} {self.date} (z={self.z_score})"
+
+
+class TrendReport(ReadOnly, models.Model):
+    """Weekly grounded trend narrative (table: trend_reports, M11, Pro) — see the SQLAlchemy model's own docstring for the citation-grounding design."""
+
+    id = models.BigAutoField(primary_key=True)
+    week_start_date = models.DateField()
+    narrative = models.JSONField()
+    raw_narrative = models.JSONField(null=True, blank=True)
+    narrative_version = models.CharField(max_length=50)
+    llm_model = models.CharField(max_length=100)
+    generated_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "trend_reports"
+        ordering = ["-week_start_date"]
+        verbose_name = "trend report"
+        verbose_name_plural = "trend reports"
+
+    def __str__(self):
+        return f"Trend report for week of {self.week_start_date}"
+
+
+class ContentChunk(ReadOnly, models.Model):
+    """Chunk-level chaptered summary (table: content_chunks, M12) — one row per ~10-minute chunk of a long video. See the SQLAlchemy model's own docstring for the map-reduce design."""
+
+    id = models.BigAutoField(primary_key=True)
+    content_type = models.CharField(max_length=20)
+    content_id = models.BigIntegerField()
+    chunk_index = models.IntegerField()
+    start_seconds = models.FloatField()
+    end_seconds = models.FloatField()
+    chapter_title = models.CharField(max_length=200)
+    chunk_summary = models.TextField()
+    summary_version = models.CharField(max_length=50)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "content_chunks"
+        ordering = ["content_type", "content_id", "chunk_index"]
+        verbose_name = "content chunk"
+        verbose_name_plural = "content chunks"
+
+    def __str__(self):
+        return f"{self.content_type}:{self.content_id} chunk #{self.chunk_index}"
+
+
+class SttJob(ReadOnly, models.Model):
+    """STT job status/metadata (table: stt_jobs, M12) — one row per video; also the single source of truth for how ANY video got its transcript (manual_caption/auto_caption/stt)."""
+
+    id = models.BigAutoField(primary_key=True)
+    content_type = models.CharField(max_length=20)
+    content_id = models.BigIntegerField()
+    status = models.CharField(max_length=20)
+    transcript_source = models.CharField(max_length=20, null=True, blank=True)
+    whisper_model = models.CharField(max_length=50, null=True, blank=True)
+    error_message = models.TextField(null=True, blank=True)
+    requested_at = models.DateTimeField()
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    retry_count = models.IntegerField(default=0)
+
+    class Meta:
+        managed = False
+        db_table = "stt_jobs"
+        verbose_name = "STT job"
+        verbose_name_plural = "STT jobs"
+
+    def __str__(self):
+        return f"{self.content_type}:{self.content_id} — {self.status}"

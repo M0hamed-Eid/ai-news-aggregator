@@ -14,10 +14,13 @@ from app.celery_app import celery_app
 from run_pipeline import (
     PipelineResult,
     run_scraping_phases,
+    run_stt_dispatch_phase,
     run_embedding_phase,
     run_digest_phase,
+    run_deep_video_phase,
     run_clustering_phase,
     run_scoring_phase,
+    run_trend_computation_phase,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,6 +32,14 @@ DEFAULT_HOURS = int(os.getenv("HOURS_LOOKBACK", "144"))
 def scrape_task(source_filter: str = "all", hours: int = DEFAULT_HOURS) -> dict:
     result = PipelineResult()
     run_scraping_phases(source_filter, hours, dry_run=False, result=result)
+    return result.__dict__
+
+
+@celery_app.task(name="app.tasks.pipeline_tasks.stt_dispatch_task")
+def stt_dispatch_task() -> dict:
+    """M12 — exposed standalone for manual triggering, same convention as every other phase task."""
+    result = PipelineResult()
+    run_stt_dispatch_phase(result)
     return result.__dict__
 
 
@@ -46,6 +57,14 @@ def digest_task(hours: int = DEFAULT_HOURS, skip_email: bool = False) -> dict:
     return result.__dict__
 
 
+@celery_app.task(name="app.tasks.pipeline_tasks.deep_video_task")
+def deep_video_task() -> dict:
+    """M12 — exposed standalone for manual triggering, same convention as every other phase task."""
+    result = PipelineResult()
+    run_deep_video_phase(result)
+    return result.__dict__
+
+
 @celery_app.task(name="app.tasks.pipeline_tasks.cluster_task")
 def cluster_task() -> dict:
     result = PipelineResult()
@@ -60,13 +79,26 @@ def score_task() -> dict:
     return result.__dict__
 
 
+@celery_app.task(name="app.tasks.pipeline_tasks.trend_task")
+def trend_task() -> dict:
+    """M11 burst detection — LLM-free, pure SQL/statistics. Also runs as
+    phase 6 of run_full_pipeline_task below; exposed standalone here for
+    manual triggering, same convention as every other phase task."""
+    result = PipelineResult()
+    run_trend_computation_phase(result)
+    return result.__dict__
+
+
 @celery_app.task(name="app.tasks.pipeline_tasks.run_full_pipeline_task")
 def run_full_pipeline_task(hours: int = DEFAULT_HOURS, skip_email: bool = False) -> dict:
-    """Mirrors run_pipeline.main()'s sequence: scrape -> embed -> digest -> cluster -> score."""
+    """Mirrors run_pipeline.main()'s sequence: scrape -> embed -> digest -> cluster -> score -> trends."""
     result = PipelineResult()
     run_scraping_phases("all", hours, dry_run=False, result=result)
+    run_stt_dispatch_phase(result)
     run_embedding_phase(result)
     run_digest_phase(hours, dry_run=False, skip_email=skip_email, result=result)
+    run_deep_video_phase(result)
     run_clustering_phase(result)
     run_scoring_phase(result)
+    run_trend_computation_phase(result)
     return result.__dict__

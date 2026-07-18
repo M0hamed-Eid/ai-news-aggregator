@@ -22,11 +22,18 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db.models import Q
 from django.views.generic import DetailView, ListView, TemplateView
 
+from apps.accounts.entitlements import user_can
 from apps.behavior.services import attach_saved_state, get_followed_keys, mark_read
-from apps.catalog.models import Article, ContentTopic, Source, TaxonomyTopic, UserRanking, YoutubeVideo
-from apps.catalog.services import attach_topics, get_enrichment, get_entities, get_related_items
+from apps.catalog.models import Article, ContentTopic, Entity, PersonEntity, Source, TaxonomyTopic, TrendReport, UserRanking, YoutubeVideo
+from apps.catalog.services import (
+    attach_topics, get_chunks, get_enrichment, get_entities, get_entity_mentions, get_entity_timeline,
+    get_full_story, get_hot_clusters, get_person_own_content, get_related_entities,
+    get_related_items, get_trending, get_user_visibility_source_keys, resolve_narrative_citations,
+)
 from apps.news.search import semantic_search
+from apps.onboarding.models import UserSourceSubscription
 from django.core.paginator import Paginator
+from django.http import Http404
 
 
 class ArticleListView(LoginRequiredMixin, ListView):
@@ -36,7 +43,10 @@ class ArticleListView(LoginRequiredMixin, ListView):
     paginate_by = 9
 
     def get_queryset(self):
-        qs = Article.objects.all()  # ordered by -published_at (model Meta)
+        # M10 — visibility='user' sources are private to their subscriber(s)
+        # (see apps.catalog.services.get_user_visibility_source_keys); this
+        # public/generic browsing page never shows them, subscribed or not.
+        qs = Article.objects.exclude(source__in=get_user_visibility_source_keys())
         source = self.request.GET.get("source", "").strip()
         if source:
             qs = qs.filter(source=source)
@@ -121,6 +131,14 @@ class VideoListView(LoginRequiredMixin, ListView):
         return ctx
 
 
+# M12 — must match run_pipeline.py's LONG_VIDEO_THRESHOLD_SECONDS exactly.
+# Duplicated (not imported) because the pipeline (SQLAlchemy) and this app
+# (Django) are two separate processes/venvs with no shared import path —
+# same convention as DjangoUser's plan-expiry mirror in
+# app/database/models/django_readmodels.py.
+LONG_VIDEO_THRESHOLD_SECONDS = 1200
+
+
 class VideoDetailView(LoginRequiredMixin, DetailView):
     model = YoutubeVideo
     template_name = "news/video_detail.html"
@@ -129,6 +147,20 @@ class VideoDetailView(LoginRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["reasoning"] = _recommendation_reasoning(self.request.user, "youtube_video", self.object.pk)
+
+        # M12 — chaptered/deep summaries. Chunking runs for EVERY qualifying
+        # video regardless of viewer plan (Architecture Principle 1); only
+        # this UI section is gated. Non-Pro sees a 200-OK upsell, not a 403
+        # (same precedent as TrendReportView above).
+        ctx["is_long_video"] = bool(
+            self.object.duration_seconds and self.object.duration_seconds >= LONG_VIDEO_THRESHOLD_SECONDS
+        )
+        ctx["can_view_chapters"] = user_can(self.request.user, "deep_video_summaries")
+        ctx["chunks"] = (
+            get_chunks("youtube_video", self.object.pk)
+            if ctx["is_long_video"] and ctx["can_view_chapters"]
+            else []
+        )
 
         # Cross-source Related (M8) — VideoDetailView had NO related-content
         # logic before this; cluster membership only (no same-source
@@ -173,7 +205,10 @@ class HomeView(ListView):
     paginate_by = 12
 
     def get_queryset(self):
-        articles = Article.objects.all()
+        # M10 — visibility='user' sources are private to their subscriber(s);
+        # the public Home page never shows them (see FeedView for the
+        # personalized path where a subscriber DOES see their own subscriptions).
+        articles = Article.objects.exclude(source__in=get_user_visibility_source_keys())
         videos = YoutubeVideo.objects.all()
 
         query = self.request.GET.get("q", "").strip()
@@ -243,6 +278,8 @@ class HomeView(ListView):
             "categories": Source.CATEGORY_LABELS.items(),
             "topics": TaxonomyTopic.objects.filter(is_active=True).order_by("sort_order"),
             "featured": featured,
+            "trending": get_trending(),
+            "hot_clusters": get_hot_clusters(),
         })
         return ctx
 
@@ -288,7 +325,16 @@ class FeedView(LoginRequiredMixin, ListView):
         ) if excluded_categories else set()
         excluded_all = excluded_sources | category_source_keys
 
-        articles = Article.objects.exclude(source__in=excluded_all)
+        # M10 — visibility='user' sources are private to their subscriber(s):
+        # hide every one EXCEPT this user's own subscriptions (unlike
+        # HomeView/ArticleListView, which hide all of them unconditionally).
+        user_source_keys = get_user_visibility_source_keys()
+        subscribed_keys = set(
+            UserSourceSubscription.objects.filter(profile=profile).values_list("source__key", flat=True)
+        )
+        hidden_user_sources = user_source_keys - subscribed_keys
+
+        articles = Article.objects.exclude(source__in=excluded_all).exclude(source__in=hidden_user_sources)
         videos = YoutubeVideo.objects.all() if "media" not in excluded_categories and "youtube" not in excluded_all else YoutubeVideo.objects.none()
         combined = list(articles) + list(videos)
         combined.sort(key=lambda item: item.published_at, reverse=True)
@@ -299,6 +345,76 @@ class FeedView(LoginRequiredMixin, ListView):
         ctx["has_ranking"] = self._has_ranking
         attach_saved_state(self.request.user, ctx["items"])
         attach_topics(ctx["items"])
+        return ctx
+
+
+class PeopleListView(LoginRequiredMixin, ListView):
+    """
+    Browse followable people (M10) — Entity rows with entity_type='person'.
+    Following itself needs no new schema (UserFollow(target_type="entity"),
+    already built in M9) — this page exists so a person is discoverable/
+    searchable at all, since entity chips on article/video detail pages
+    only ever surface a person already mentioned in whatever content
+    you're currently reading.
+    """
+
+    model = Entity
+    template_name = "news/people_list.html"
+    context_object_name = "people"
+    paginate_by = 24
+
+    def get_queryset(self):
+        qs = Entity.objects.filter(entity_type="person").order_by("name")
+        query = self.request.GET.get("q", "").strip()
+        if query:
+            qs = qs.filter(name__icontains=query)
+        return qs
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["q"] = self.request.GET.get("q", "").strip()
+        ctx["followed_entities"] = get_followed_keys(self.request.user, "entity")
+        return ctx
+
+
+class EntityDetailView(LoginRequiredMixin, DetailView):
+    """
+    General entity page (M11 — generalizes M10's person-only PersonDetailView,
+    since Entity covers company/model/person/technology and every one of them
+    can have a mention timeline/related-entities page, not just people).
+    Registered at the project root (/entity/<pk>/, config/urls.py) alongside
+    home/feed/search — a first-class surface, not a sub-page of News browsing.
+
+    Always shows: mention timeline sparkline + dated mention list (M11) and
+    related entities (M11, co-occurrence). Only for entity_type='person'
+    ALSO shows their own scraped output (get_person_own_content, M10) —
+    corpus mentions rarely include a person's own writing about themselves,
+    so that section stays person-specific, not folded into "mentions".
+    """
+
+    model = Entity
+    template_name = "news/entity_detail.html"
+    context_object_name = "entity"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        entity = self.object
+
+        mentions = get_entity_mentions(entity.id, limit=12)
+        attach_saved_state(self.request.user, mentions)
+        attach_topics(mentions)
+        ctx["mentions"] = mentions
+        ctx["timeline"] = get_entity_timeline(entity.id)
+        ctx["related_entities"] = get_related_entities(entity.id)
+        ctx["followed_entities"] = get_followed_keys(self.request.user, "entity")
+
+        if entity.entity_type == "person":
+            own_content = get_person_own_content(entity.id, limit=12)
+            attach_saved_state(self.request.user, own_content)
+            attach_topics(own_content)
+            ctx["own_content"] = own_content
+            ctx["footprints"] = PersonEntity.objects.filter(entity_id=entity.id).select_related("source")
+
         return ctx
 
 
@@ -334,4 +450,61 @@ class SearchView(TemplateView):
 
         attach_saved_state(self.request.user, ctx["items"])
         attach_topics(ctx["items"])
+        return ctx
+
+
+class TrendReportView(LoginRequiredMixin, TemplateView):
+    """
+    Weekly grounded trend narrative (M11, Pro) — /insights/, project root
+    alongside Home/Feed/Search/Entity. TrendReport auto-publishes
+    immediately after generation (see app.agents.trend_narrative_agent —
+    no draft/review gate exists anywhere in this codebase, and none is
+    introduced here; the safety net is mechanical citation-grounding at
+    generation time). Non-Pro sees a 200-OK upsell state, not a 403 — kept
+    discoverable, matching this codebase's one other partial-gate precedent
+    (apps.onboarding.source_submission's cap message) rather than hiding
+    the page entirely. This is the first full-PAGE Pro gate here.
+    """
+
+    template_name = "news/trend_report.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["can_view"] = user_can(self.request.user, "trend_narrative")
+        if ctx["can_view"]:
+            report = TrendReport.objects.order_by("-week_start_date").first()
+            ctx["report"] = report
+            ctx["claims"] = resolve_narrative_citations(report.narrative) if report else []
+        return ctx
+
+
+class StoryClusterView(LoginRequiredMixin, TemplateView):
+    """
+    One story, all sources (M11, Nice-to-have) — keyed by a content ITEM,
+    never a cluster id (see get_full_story's docstring: cluster identity
+    churns between pipeline runs). 404s if the item doesn't exist; renders
+    an honest "not currently grouped with anything else" state if it exists
+    but isn't (or is no longer) clustered, rather than pretending a lone
+    item is a multi-source story.
+    """
+
+    template_name = "news/story_cluster.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        content_type = self.kwargs["content_type"]
+        content_id = self.kwargs["content_id"]
+        if content_type not in ("article", "youtube_video"):
+            raise Http404("Unknown content type")
+
+        model = Article if content_type == "article" else YoutubeVideo
+        anchor = model.objects.filter(pk=content_id).first()
+        if anchor is None:
+            raise Http404("Item not found")
+
+        members = get_full_story(content_type, content_id)
+        attach_saved_state(self.request.user, members)
+        attach_topics(members)
+        ctx["anchor"] = anchor
+        ctx["members"] = members
         return ctx

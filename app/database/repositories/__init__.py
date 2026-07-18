@@ -16,6 +16,11 @@ from app.database.repositories.content_cluster_repository import ContentClusterR
 from app.database.repositories.content_enrichment_repository import ContentEnrichmentRepository
 from app.database.repositories.content_score_repository import ContentScoreRepository
 from app.database.repositories.user_profile_vector_repository import UserProfileVectorRepository
+from app.database.repositories.person_entity_repository import PersonEntityRepository
+from app.database.repositories.trend_repository import TrendRepository
+from app.database.repositories.trend_report_repository import TrendReportRepository
+from app.database.repositories.content_chunk_repository import ContentChunkRepository
+from app.database.repositories.stt_job_repository import SttJobRepository
 
 __all__ = [
     "ArticleRepository", "YoutubeRepository", "EmbeddingRepository",
@@ -24,5 +29,7 @@ __all__ = [
     "TaxonomyTopicRepository", "ContentTopicRepository", "EntityRepository",
     "ContentEntityRepository", "ContentClusterRepository",
     "ContentEnrichmentRepository", "ContentScoreRepository",
-    "UserProfileVectorRepository",
+    "UserProfileVectorRepository", "PersonEntityRepository",
+    "TrendRepository", "TrendReportRepository",
+    "ContentChunkRepository", "SttJobRepository",
 ]

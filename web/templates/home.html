@@ -14,6 +14,39 @@
   {% endif %}
 </div>
 
+<h2 class="h5 app-section-title mb-3"><i class="bi bi-graph-up-arrow text-primary"></i> Trending</h2>
+{% if trending or hot_clusters %}
+  {% if trending %}
+    <div class="d-flex flex-wrap gap-2 mb-2">
+      {% for t in trending %}
+        {% if t.dimension == "entity" %}
+          <a href="{% url 'entity_detail' t.object.pk %}" class="badge rounded-pill text-bg-light border text-decoration-none">
+            {{ t.object.name }} <span class="text-primary fw-semibold">{{ t.multiplier }}x</span>
+          </a>
+        {% else %}
+          <a href="{% url 'home' %}?topic={{ t.object.slug }}" class="badge rounded-pill text-bg-light border text-decoration-none">
+            {{ t.object.name }} <span class="text-primary fw-semibold">{{ t.multiplier }}x</span>
+          </a>
+        {% endif %}
+      {% endfor %}
+    </div>
+  {% endif %}
+  {% if hot_clusters %}
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      {% for hc in hot_clusters %}
+        <a href="{% url 'news:story_cluster' hc.representative_content_type hc.representative.pk %}"
+           class="badge rounded-pill text-bg-warning-subtle text-warning-emphasis border text-decoration-none">
+          <i class="bi bi-fire"></i> {{ hc.representative.title|truncatechars:50 }} — {{ hc.member_count }} sources
+        </a>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% else %}
+  <div class="mb-4">
+    {% include "components/_empty_state.html" with icon="bi-graph-up" title="Nothing is trending right now" message="Check back soon — burst detection runs alongside every scrape." %}
+  </div>
+{% endif %}
+
 {% if featured %}
 <h2 class="h5 app-section-title mb-3"><i class="bi bi-fire text-primary"></i> Featured</h2>
 <div class="row row-cols-1 row-cols-md-3 g-4 mb-5">

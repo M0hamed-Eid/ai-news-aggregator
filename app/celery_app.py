@@ -39,6 +39,10 @@ celery_app = Celery(
         "app.tasks.profile_vector_tasks",
         "app.tasks.ranking_tasks",
         "app.tasks.search_tasks",
+        "app.tasks.source_submission_tasks",
+        "app.tasks.source_revalidation_tasks",
+        "app.tasks.trend_tasks",
+        "app.tasks.stt_tasks",
     ],
 )
 
@@ -57,6 +61,16 @@ celery_app.conf.enable_utc = True
 # import this app/config (that's the whole point — it stays dependency-free).
 celery_app.conf.task_routes = {
     "app.tasks.search_tasks.*": {"queue": "interactive"},
+    # M10 — "add a source" needs live relevance feedback (a user is waiting
+    # on the result synchronously), same reasoning as search_tasks above.
+    "app.tasks.source_submission_tasks.*": {"queue": "interactive"},
+    # M12 — STT (yt-dlp download + faster-whisper CPU transcription) is
+    # compute-heavy and can take minutes per video. Its own queue keeps it
+    # off the default worker so it never blocks the 6-hourly scrape/enrich
+    # chain. Per docs/ROADMAP.md, this queue's worker should run on a
+    # residential-IP host (`-Q stt`) — yt-dlp is more likely to get
+    # rate-limited/blocked from a datacenter IP.
+    "app.tasks.stt_tasks.*": {"queue": "stt"},
 }
 
 # Mirrors this project's existing cron precedent (README: "0 */6 * * *") —
@@ -86,5 +100,20 @@ celery_app.conf.beat_schedule = {
     "rank-all-users-every-3-hours": {
         "task": "app.tasks.ranking_tasks.rank_all_users_task",
         "schedule": crontab(minute=30, hour="*/3"),
+    },
+    # M10 — user-submitted sources drift (a feed can go off-topic, die, or
+    # come back into scope); re-run the same relevance gate used at
+    # submission time once a month, live, rather than trusting a one-time
+    # decision forever.
+    "revalidate-user-sources-monthly": {
+        "task": "app.tasks.source_revalidation_tasks.revalidate_user_sources_task",
+        "schedule": crontab(minute=0, hour=4, day_of_month=1),
+    },
+    # M11 — the only genuinely weekly, LLM-driven job in this milestone;
+    # burst detection itself is LLM-free and rides the 6-hourly pipeline
+    # chain instead (see run_pipeline.py's run_trend_computation_phase).
+    "generate-weekly-trend-report": {
+        "task": "app.tasks.trend_tasks.generate_weekly_trend_report_task",
+        "schedule": crontab(minute=0, hour=6, day_of_week=1),
     },
 }

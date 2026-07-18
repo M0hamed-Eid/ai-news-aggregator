@@ -23,6 +23,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     Index,
     Integer,
     String,
@@ -51,6 +52,16 @@ class Source(Base):
                    scraper's constructor kwargs.
         "search" — reserved for a future search-based adapter (not used yet).
         "scrape" — reserved for a future browser-scrape adapter (not used yet).
+
+    User-submitted sources (M10): visibility='user' rows are gated by an
+    AI-relevance check at creation (see app/services/relevance_gate.py) and
+    re-validated monthly (feeds drift); their content only reaches a user's
+    feed/ranking/digest via an active Django user_source_subscriptions row
+    (opt-in), unlike visibility='global' rows (on by default for everyone,
+    opt-out via UserExclusion — unchanged since M4). schedule_hours is
+    ACTUALLY enforced (not just metadata) for visibility='user' rows only —
+    see run_pipeline.py's run_scraping_phases(); the 9 curated rows keep
+    their existing every-pipeline-run behavior untouched.
     """
 
     __tablename__ = "sources"
@@ -125,6 +136,62 @@ class Source(Base):
     )
 
     # -------------------------------------------------------------------------
+    # User-submitted sources (M10) — all nullable/defaulted so every
+    # pre-M10 row (the 9 admin-seeded sources) is unaffected. visibility
+    # distinguishes the curated registry (on-by-default for everyone,
+    # opt-out via UserExclusion — unchanged from M4) from user-submitted
+    # sources (opt-IN via Django's user_source_subscriptions — see
+    # web/apps/onboarding/models.py). feed_url is the canonicalization key:
+    # before creating a new user-submitted Source row, check whether one
+    # already exists for this exact feed URL — "the same feed added by two
+    # users creates one global[sic, roadmap's own wording for "one shared"]
+    # source, two subscriptions", per the roadmap's M10 success criterion.
+    # -------------------------------------------------------------------------
+    created_by: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+        default=None,
+        comment="Django users.id of whoever submitted this source — plain reference, no DB-level FK (different ORM/metadata). Null for the 9 admin-seeded sources.",
+    )
+
+    visibility: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="global",
+        server_default="global",
+        comment="'global' (admin-seeded, on by default for everyone) or 'user' (submitted by a user, opt-in via user_source_subscriptions)",
+    )
+
+    feed_url: Mapped[str | None] = mapped_column(
+        String(2048),
+        nullable=True,
+        default=None,
+        unique=True,
+        comment="Canonicalization key for user-submitted RSS sources — the exact feed URL, so re-submitting an already-known feed reuses the existing Source row instead of duplicating it. Null for admin-seeded rows (their feeds live inside config['feeds'], several per row).",
+    )
+
+    validation_status: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+        default=None,
+        comment="AI-relevance gate outcome for user-submitted sources: 'accepted' | 'accepted_low_trust' | 'rejected'. Null for admin-seeded rows (never gated).",
+    )
+
+    validation_score: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        default=None,
+        comment="Mean cosine similarity vs. the AI-corpus centroid at last validation — the relevance gate's raw score, not just its accept/reject decision",
+    )
+
+    validated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+        comment="When the relevance gate last ran for this source — re-validated monthly per the roadmap (feeds drift over time)",
+    )
+
+    # -------------------------------------------------------------------------
     # Run tracking
     # -------------------------------------------------------------------------
     last_run_at: Mapped[datetime | None] = mapped_column(
@@ -174,8 +241,18 @@ class Source(Base):
             "adapter_type IN ('rss', 'api', 'search', 'scrape')",
             name="ck_sources_adapter_type",
         ),
+        CheckConstraint(
+            "visibility IN ('global', 'user')",
+            name="ck_sources_visibility",
+        ),
+        CheckConstraint(
+            "validation_status IS NULL OR validation_status IN ('accepted', 'accepted_low_trust', 'rejected')",
+            name="ck_sources_validation_status",
+        ),
         Index("ix_sources_is_active", "is_active"),
         Index("ix_sources_category", "category"),
+        Index("ix_sources_visibility", "visibility"),
+        Index("ix_sources_created_by", "created_by"),
     )
 
     def __repr__(self) -> str:

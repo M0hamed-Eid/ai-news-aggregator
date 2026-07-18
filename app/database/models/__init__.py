@@ -25,11 +25,17 @@ from app.database.models.content_cluster_member import ContentClusterMember
 from app.database.models.content_enrichment import ContentEnrichment
 from app.database.models.content_score import ContentScore
 from app.database.models.user_profile_vector import UserProfileVector
+from app.database.models.person_entity import PersonEntity
+from app.database.models.trend import Trend
+from app.database.models.trend_report import TrendReport
+from app.database.models.content_chunk import ContentChunk
+from app.database.models.stt_job import SttJob
 
 __all__ = [
     "Article", "YoutubeVideo", "Embedding", "Source", "UserRanking", "DigestLog",
     "UserAffinity", "DigestClickToken",
     "TaxonomyTopic", "ContentTopic", "Entity", "ContentEntity",
     "ContentCluster", "ContentClusterMember", "ContentEnrichment", "ContentScore",
-    "UserProfileVector",
+    "UserProfileVector", "PersonEntity", "Trend", "TrendReport",
+    "ContentChunk", "SttJob",
 ]

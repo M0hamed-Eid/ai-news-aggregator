@@ -42,6 +42,14 @@ class DjangoUser(DjangoBase):
     first_name: Mapped[str] = mapped_column(String(150))
     is_active: Mapped[bool] = mapped_column(Boolean)
     is_staff: Mapped[bool] = mapped_column(Boolean)
+    # M11: the weekly trend-narrative broadcast email runs from THIS process
+    # (app/tasks/trend_tasks.py), which has no other way to know who's
+    # effectively Pro — replicate web/apps/accounts/entitlements.py's exact
+    # expiry check here (plan == "pro" AND (plan_expires_at is null OR >= now))
+    # since Django code can't be imported cross-process. Same
+    # documented-duplication precedent as the rest of this file.
+    plan: Mapped[str] = mapped_column(String(20))
+    plan_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     profile: Mapped[Optional["DjangoUserProfile"]] = relationship(
         back_populates="user", uselist=False
@@ -149,6 +157,23 @@ class DjangoUserEvent(DjangoBase):
     content_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     content_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     value: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DjangoUserSourceSubscription(DjangoBase):
+    """
+    Read-only mirror of Django's user_source_subscriptions
+    (web/apps/onboarding/models.py, M10) — lets RankingService scope a
+    visibility='user' Source's content to ONLY its subscribers (opt-in),
+    never the general population. Keyed by profile_id (not user_id
+    directly) — same convention as UserExclusion/UserInterest, since
+    UserSourceSubscription's own Django FK is to UserProfile, not User.
+    """
+    __tablename__ = "user_source_subscriptions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    profile_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("user_profiles.id"))
+    source_id: Mapped[int] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

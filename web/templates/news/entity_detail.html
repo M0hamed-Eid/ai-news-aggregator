@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}{{ entity.name }} · AI Compass{% endblock %}
+{% block content %}
+
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb">
+    {% if entity.entity_type == "person" %}
+      <li class="breadcrumb-item"><a href="{% url 'news:people_list' %}">People</a></li>
+    {% else %}
+      <li class="breadcrumb-item"><a href="{% url 'home' %}">Home</a></li>
+    {% endif %}
+    <li class="breadcrumb-item active" aria-current="page">{{ entity.name }}</li>
+  </ol>
+</nav>
+
+<div class="bg-white rounded-3 shadow-sm p-4 p-md-5 mb-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div>
+      <h1 class="h3 mb-1">{{ entity.name }}</h1>
+      <span class="badge badge-category text-uppercase">{{ entity.entity_type }}</span>
+      {% if footprints %}
+        {% for fp in footprints %}
+          <span class="badge text-bg-secondary ms-1 text-uppercase">{{ fp.footprint_type }}</span>
+        {% endfor %}
+      {% endif %}
+    </div>
+    <button type="button" class="badge rounded-pill text-bg-light border btn-follow-chip" data-action="follow"
+            data-target-type="entity" data-target-key="{{ entity.id }}"
+            data-active="{% if entity.id|stringformat:'s' in followed_entities %}true{% else %}false{% endif %}"
+            aria-label="Follow {{ entity.name }}" title="Follow this entity">
+      <i class="bi {% if entity.id|stringformat:'s' in followed_entities %}bi-check-lg{% else %}bi-plus-lg{% endif %}"></i>
+      {% if entity.id|stringformat:'s' in followed_entities %}Following{% else %}Follow{% endif %}
+    </button>
+  </div>
+
+  {% if timeline %}
+    <div class="mt-4">
+      <span class="text-muted small text-uppercase">Mentions, last 90 days</span>
+      <div class="d-flex align-items-end gap-1 mt-2" style="height: 60px;">
+        {% for point in timeline %}
+          <div class="bg-primary bg-opacity-{% if point.is_trending %}100{% else %}25{% endif %} rounded-top"
+               style="width: 6px; height: {% widthratio point.mention_count 10 100 %}%; min-height: 2px;"
+               title="{{ point.date }}: {{ point.mention_count }} mention{{ point.mention_count|pluralize }}{% if point.is_trending %} — trending{% endif %}">
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+</div>
+
+{% if entity.entity_type == "person" %}
+  <h2 class="h5 app-section-title mb-3"><i class="bi bi-pencil-square text-primary"></i> Their own output</h2>
+  {% if own_content %}
+    <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3 mb-5">
+      {% for item in own_content %}
+        {% if item.video_id %}
+          {% include "components/_video_card.html" with video=item is_saved=item.is_saved is_hidden=item.is_hidden only %}
+        {% else %}
+          {% include "components/_article_card.html" with article=item is_saved=item.is_saved is_hidden=item.is_hidden only %}
+        {% endif %}
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="mb-5">
+      {% include "components/_empty_state.html" with icon="bi-pencil" title="No own content yet" message="This person hasn't had a blog, YouTube channel, GitHub, or Substack footprint registered — or nothing has been scraped from it yet." %}
+    </div>
+  {% endif %}
+{% endif %}
+
+<h2 class="h5 app-section-title mb-3"><i class="bi bi-megaphone text-primary"></i> Mentions</h2>
+{% if mentions %}
+  <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3 mb-5">
+    {% for item in mentions %}
+      {% if item.video_id %}
+        {% include "components/_video_card.html" with video=item is_saved=item.is_saved is_hidden=item.is_hidden only %}
+      {% else %}
+        {% include "components/_article_card.html" with article=item is_saved=item.is_saved is_hidden=item.is_hidden only %}
+      {% endif %}
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="mb-5">
+    {% include "components/_empty_state.html" with icon="bi-megaphone" title="No mentions yet" message="Nothing in the corpus has mentioned this entity so far." %}
+  </div>
+{% endif %}
+
+{% if related_entities %}
+  <h2 class="h5 app-section-title mb-3"><i class="bi bi-diagram-3 text-primary"></i> Related</h2>
+  <div class="d-flex flex-wrap gap-2">
+    {% for related in related_entities %}
+      <a href="{% url 'entity_detail' related.pk %}" class="badge rounded-pill text-bg-light border text-decoration-none">
+        {{ related.name }}
+      </a>
+    {% endfor %}
+  </div>
+{% endif %}
+
+{% endblock %}

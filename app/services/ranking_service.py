@@ -42,6 +42,7 @@ from app.database.models.content_enrichment import ContentEnrichment
 from app.database.models.content_score import ContentScore
 from app.database.models.content_topic import ContentTopic
 from app.database.models.embedding import Embedding
+from app.database.models.source import Source
 from app.database.models.taxonomy_topic import TaxonomyTopic
 from app.database.models.user_affinity import UserAffinity
 from app.database.models.youtube_video import YoutubeVideo
@@ -98,6 +99,7 @@ class _Candidate:
     quality_score: float = 0.5
     embedding: Optional[list] = None
     reading_minutes: int = 1
+    channel_id: Optional[str] = None  # YoutubeVideo.channel_id — only set for content_type="youtube_video"
 
 
 class RankingService:
@@ -115,10 +117,22 @@ class RankingService:
         """Returns (ranked_scores, item_map) — the exact shapes UserRankingRepository/EmailAgent expect."""
         user_id = recipient.user_id
 
+        # M10: visibility='user' sources are private to subscribers (+
+        # followers of a person whose registered footprint IS that source —
+        # see _followed_person_footprints) — resolved BEFORE the eligibility
+        # filter below so a person-follow's guaranteed-inclusion isn't
+        # accidentally excluded here, then never given a chance to be
+        # guaranteed back in later.
+        followed_topics, followed_entities, followed_sources = self._followed_targets(user_id)
+        followed_person_sources, followed_person_channels = self._followed_person_footprints(followed_entities)
+        user_source_keys = self._user_visibility_source_keys()
+        allowed_user_source_keys = self._subscribed_user_source_keys(user_id) | followed_person_sources
+
         eligible = [
             item for item in all_items
             if _article_type_of(item) not in recipient.excluded_sources
             and source_categories.get(_article_type_of(item)) not in recipient.excluded_categories
+            and (_article_type_of(item) not in user_source_keys or _article_type_of(item) in allowed_user_source_keys)
         ]
         if not eligible:
             return [], {}
@@ -134,10 +148,10 @@ class RankingService:
                 profile_vector = pv.vector
 
         cold_start_topics = self._onboarding_topic_slugs(user_id) if (profile_vector is None and user_id is not None) else set()
-        followed_topics, followed_entities, followed_sources = self._followed_targets(user_id)
 
         pool = self._select_candidates(
             candidates, profile_vector, cold_start_topics, followed_topics, followed_entities, followed_sources,
+            followed_person_sources, followed_person_channels,
         )
         if not pool:
             return [], {}
@@ -149,7 +163,8 @@ class RankingService:
         scored = [
             (c, self._score(
                 c, topic_affinity, source_affinity, last_shown, recipient,
-                cold_start_topics, followed_topics, followed_entities, followed_sources, now,
+                cold_start_topics, followed_topics, followed_entities, followed_sources,
+                followed_person_sources, followed_person_channels, now,
             ))
             for c in pool
         ]
@@ -251,11 +266,13 @@ class RankingService:
                 quality_score=score_by_key.get(key, 0.5),
                 embedding=embedding_by_key.get(key),
                 reading_minutes=reading_minutes,
+                channel_id=item.channel_id if isinstance(item, YoutubeVideo) else None,
             ))
         return candidates
 
     def _select_candidates(
         self, candidates, profile_vector, cold_start_topics, followed_topics, followed_entities, followed_sources,
+        followed_person_sources, followed_person_channels,
     ) -> List[_Candidate]:
         by_key = {(c.content_type, c.content_id): c for c in candidates}
         selected_keys = set()
@@ -277,7 +294,12 @@ class RankingService:
 
         # Leg C: followed entities/topics/sources — guaranteed inclusion,
         # even if an item is old or dissimilar to the profile vector.
-        if followed_topics or followed_entities or followed_sources:
+        # M10: also guarantees a followed PERSON's own output (their blog/
+        # YouTube channel via person_entities), independent of `entity_ids`
+        # (content_entities mentions) — a person's own posts/videos rarely
+        # mention them by name, so entity-mention matching alone would miss
+        # most of their own content.
+        if followed_topics or followed_entities or followed_sources or followed_person_sources or followed_person_channels:
             for c in candidates:
                 key = (c.content_type, c.content_id)
                 if key in selected_keys:
@@ -286,6 +308,8 @@ class RankingService:
                     (set(c.topics) & followed_topics)
                     or (set(str(e) for e in c.entity_ids) & followed_entities)
                     or (c.digest_item.article_type in followed_sources)
+                    or (c.digest_item.article_type in followed_person_sources)
+                    or (c.channel_id is not None and c.channel_id in followed_person_channels)
                 ):
                     selected_keys.add(key)
 
@@ -346,13 +370,75 @@ class RankingService:
         sources = {key for t, key in rows if t == "source"}
         return topics, entities, sources
 
+    def _followed_person_footprints(self, followed_entities: set) -> Tuple[set, set]:
+        """
+        M10: for every followed-entity id that's a person with a registered
+        footprint (app/database/models/person_entity.py), resolve which
+        Source.key values (blog/github/substack — each its own dedicated
+        Source row) or YouTube channel_ids represent THEIR OWN content.
+        YouTube is special-cased on channel_id rather than Source.key
+        because every YouTube channel shares the single seeded
+        key="youtube" Source row (one row, many channels in its config) —
+        Source.key can't disambiguate one person's channel from another's.
+        """
+        entity_ids = [int(e) for e in followed_entities if e.isdigit()]
+        if not entity_ids:
+            return set(), set()
+
+        from app.database.models.person_entity import PersonEntity
+        from app.database.models.source import Source
+
+        rows = (
+            self.db.query(PersonEntity.footprint_type, PersonEntity.external_identifier, Source.key)
+            .outerjoin(Source, PersonEntity.source_id == Source.id)
+            .filter(PersonEntity.entity_id.in_(entity_ids))
+            .all()
+        )
+        source_keys, channel_ids = set(), set()
+        for footprint_type, external_identifier, source_key in rows:
+            if footprint_type == "youtube":
+                if external_identifier:
+                    channel_ids.add(external_identifier)
+            elif source_key:
+                source_keys.add(source_key)
+        return source_keys, channel_ids
+
+    def _user_visibility_source_keys(self) -> set:
+        """All Source.key values with visibility='user' — the set of sources gated by subscription, not exclusion (M10)."""
+        return {key for (key,) in self.db.query(Source.key).filter(Source.visibility == "user").all()}
+
+    def _subscribed_user_source_keys(self, user_id: Optional[int]) -> set:
+        """
+        Source.key values this user is subscribed to via Django's
+        UserSourceSubscription (M10). Two plain queries, not one
+        cross-declarative-base join — same reasoning as
+        _onboarding_topic_slugs: DjangoUserSourceSubscription/
+        DjangoUserProfile (DjangoBase) and Source (this ORM's own Base)
+        aren't in the same SQLAlchemy registry.
+        """
+        if user_id is None:
+            return set()
+        from app.database.models.django_readmodels import DjangoUserProfile, DjangoUserSourceSubscription
+
+        source_ids = [
+            sid for (sid,) in
+            self.db.query(DjangoUserSourceSubscription.source_id)
+            .join(DjangoUserProfile, DjangoUserProfile.id == DjangoUserSourceSubscription.profile_id)
+            .filter(DjangoUserProfile.user_id == user_id)
+            .all()
+        ]
+        if not source_ids:
+            return set()
+        return {key for (key,) in self.db.query(Source.key).filter(Source.id.in_(source_ids)).all()}
+
     # ------------------------------------------------------------------
     # Scoring
     # ------------------------------------------------------------------
 
     def _score(
         self, c: _Candidate, topic_affinity, source_affinity, last_shown, recipient: Recipient,
-        cold_start_topics, followed_topics, followed_entities, followed_sources, now,
+        cold_start_topics, followed_topics, followed_entities, followed_sources,
+        followed_person_sources, followed_person_channels, now,
     ) -> dict:
         if topic_affinity:
             max_aff = max(topic_affinity.values())
@@ -399,8 +485,14 @@ class RankingService:
             key=lambda t: -topic_affinity.get(t, 1.0),
         )
 
+        is_person_own_content = (
+            c.digest_item.article_type in followed_person_sources
+            or (c.channel_id is not None and c.channel_id in followed_person_channels)
+        )
         followed_match = None
-        if set(c.topics) & followed_topics:
+        if is_person_own_content:
+            followed_match = "a person you follow"
+        elif set(c.topics) & followed_topics:
             followed_match = next(iter(set(c.topics) & followed_topics))
         elif set(str(e) for e in c.entity_ids) & followed_entities:
             followed_match = "an entity you follow"
@@ -537,7 +629,9 @@ def _build_explanation(features: dict) -> str:
     reasons = []
     if features.get("matched_topics"):
         reasons.append(f"matches your interest in {features['matched_topics'][0]}")
-    if features.get("followed_match"):
+    if features.get("followed_match") == "a person you follow":
+        reasons.append("is by a person you follow")
+    elif features.get("followed_match"):
         reasons.append(f"related to {features['followed_match']}, which you follow")
     if features.get("source_affinity", 0) > 0.6:
         reasons.append("from a source you engage with often")

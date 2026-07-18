@@ -7,8 +7,9 @@ from django.views.generic import TemplateView, View
 
 from apps.catalog.models import Source
 
-from .models import Interest, Persona
+from .models import Interest, Persona, UserSourceSubscription
 from .services import save_exclusions, save_interests
+from .source_submission import submit_source
 
 
 class PreferencesView(LoginRequiredMixin, TemplateView):
@@ -52,7 +53,13 @@ class SourcesView(LoginRequiredMixin, TemplateView):
     CATEGORY_LABELS = Source.CATEGORY_LABELS
 
     def _filtered_sources(self, q, category_filter):
-        sources = Source.objects.filter(is_active=True)
+        # visibility='global' only (M10) — user-submitted sources are
+        # opt-IN via UserSourceSubscription, not opt-out via UserExclusion,
+        # so they must never appear in THIS on-by-default checkbox list
+        # (a user-source the current user isn't subscribed to would
+        # otherwise render as "checked"/included by mistake, since absence
+        # of an exclusion row means included for the exclusion model).
+        sources = Source.objects.filter(is_active=True, visibility="global")
         if q:
             sources = sources.filter(name__icontains=q)
         if category_filter:
@@ -69,6 +76,14 @@ class SourcesView(LoginRequiredMixin, TemplateView):
         q = self.request.GET.get("q", "").strip()
         category_filter = self.request.GET.get("category", "")
 
+        # M10 — user-submitted sources: this user's own submissions (any
+        # validation outcome, for transparency) and every source they're
+        # subscribed to (their own + anyone else's already-registered ones).
+        my_sources = Source.objects.filter(visibility="user", created_by=self.request.user.id)
+        my_subscriptions = (
+            UserSourceSubscription.objects.filter(profile=profile).select_related("source")
+        )
+
         context.update({
             "sources": self._filtered_sources(q, category_filter),
             "excluded_sources": excluded_sources,
@@ -76,6 +91,8 @@ class SourcesView(LoginRequiredMixin, TemplateView):
             "categories": Source.CATEGORY_LABELS.items(),
             "q": q,
             "category_filter": category_filter,
+            "my_sources": my_sources,
+            "my_subscriptions": my_subscriptions,
         })
         return context
 
@@ -109,6 +126,42 @@ class SourcesView(LoginRequiredMixin, TemplateView):
         if q or category_filter:
             redirect_url += f"?q={q}&category={category_filter}"
         return redirect(redirect_url)
+
+
+class AddSourceView(LoginRequiredMixin, View):
+    """
+    POST /onboarding/sources/add/ — {feed_url, name, category}. Runs the
+    AI-relevance gate (via a Celery round-trip to the pipeline's
+    "interactive" queue, see apps.onboarding.source_submission) and shows
+    the result as a message banner — "live relevance feedback" per the
+    roadmap, just server-rendered rather than a client-side AJAX preview,
+    matching this project's existing no-JS-framework convention.
+    """
+
+    def post(self, request, *args, **kwargs):
+        result = submit_source(
+            request.user,
+            feed_url=request.POST.get("feed_url", ""),
+            name=request.POST.get("name", ""),
+            category=request.POST.get("category") or "developer_communities",
+        )
+        if result["ok"]:
+            messages.success(request, result["message"])
+        else:
+            messages.error(request, result["message"])
+        return redirect("onboarding:sources")
+
+
+class UnsubscribeSourceView(LoginRequiredMixin, View):
+    """POST /onboarding/sources/unsubscribe/<id>/ — drop this user's subscription to a user-submitted source."""
+
+    def post(self, request, source_id, *args, **kwargs):
+        deleted, _ = UserSourceSubscription.objects.filter(
+            profile=request.user.profile, source_id=source_id,
+        ).delete()
+        if deleted:
+            messages.success(request, "Unsubscribed.")
+        return redirect("onboarding:sources")
 
 
 class OnboardingWizardView(LoginRequiredMixin, View):
