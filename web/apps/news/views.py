@@ -26,21 +26,22 @@ from apps.accounts.entitlements import user_can
 from apps.behavior.services import attach_saved_state, get_followed_keys, mark_read
 from apps.catalog.models import Article, ContentTopic, Entity, PersonEntity, Source, TaxonomyTopic, TrendReport, UserRanking, YoutubeVideo
 from apps.catalog.services import (
-    attach_topics, get_chunks, get_enrichment, get_entities, get_entity_mentions, get_entity_timeline,
-    get_full_story, get_hot_clusters, get_person_own_content, get_related_entities,
+    attach_topics, get_chunks, get_cluster_member_count, get_enrichment, get_entities, get_entity_mentions,
+    get_entity_timeline, get_full_story, get_hot_clusters, get_person_own_content, get_related_entities,
     get_related_items, get_trending, get_user_visibility_source_keys, resolve_narrative_citations,
 )
 from apps.news.search import semantic_search
 from apps.onboarding.models import UserSourceSubscription
 from django.core.paginator import Paginator
-from django.http import Http404
+from django.http import Http404, JsonResponse
+from django.template.loader import render_to_string
 
 
 class ArticleListView(LoginRequiredMixin, ListView):
     model = Article
     template_name = "news/article_list.html"
     context_object_name = "articles"
-    paginate_by = 9
+    paginate_by = 99
 
     def get_queryset(self):
         # M10 — visibility='user' sources are private to their subscriber(s)
@@ -95,6 +96,8 @@ class ArticleDetailView(LoginRequiredMixin, DetailView):
         attach_topics(related)
         ctx["related"] = related
 
+        ctx["cluster_member_count"] = get_cluster_member_count("article", self.object.pk)
+
         attach_topics([self.object])
         ctx["topics"] = self.object.topics
         enrichment = get_enrichment("article", self.object.pk)
@@ -111,7 +114,7 @@ class VideoListView(LoginRequiredMixin, ListView):
     model = YoutubeVideo
     template_name = "news/video_list.html"
     context_object_name = "videos"
-    paginate_by = 9
+    paginate_by = 99
 
     def get_queryset(self):
         qs = YoutubeVideo.objects.all()  # ordered by -published_at (model Meta)
@@ -170,6 +173,8 @@ class VideoDetailView(LoginRequiredMixin, DetailView):
         attach_saved_state(self.request.user, related)
         attach_topics(related)
         ctx["related"] = related
+
+        ctx["cluster_member_count"] = get_cluster_member_count("youtube_video", self.object.pk)
 
         attach_topics([self.object])
         ctx["topics"] = self.object.topics
@@ -300,6 +305,32 @@ class FeedView(LoginRequiredMixin, ListView):
     template_name = "feed.html"
     context_object_name = "items"
     paginate_by = 12
+
+    def get(self, request, *args, **kwargs):
+        """
+        Normal GET renders the full page as always. ?fragment=1 (the
+        "Show More" button, see beacon.js) reuses the EXACT SAME
+        queryset/pagination/context logic below — including
+        attach_saved_state/attach_topics in get_context_data — and just
+        returns the card-partial HTML as JSON instead of a full page, so
+        there's no separate/duplicated fragment-building code path.
+        """
+        self.object_list = self.get_queryset()
+        context = self.get_context_data()
+        if request.GET.get("fragment") == "1":
+            return self._fragment_response(context)
+        return self.render_to_response(context)
+
+    def _fragment_response(self, context):
+        page_obj = context.get("page_obj")
+        html = render_to_string(
+            "components/_feed_items.html", {"items": context["items"]}, request=self.request
+        )
+        return JsonResponse({
+            "html": html,
+            "has_next": bool(page_obj and page_obj.has_next()),
+            "next_page": page_obj.next_page_number() if page_obj and page_obj.has_next() else None,
+        })
 
     def get_queryset(self):
         rankings = list(
@@ -507,4 +538,36 @@ class StoryClusterView(LoginRequiredMixin, TemplateView):
         attach_topics(members)
         ctx["anchor"] = anchor
         ctx["members"] = members
+        return ctx
+
+
+class ClusterListView(LoginRequiredMixin, TemplateView):
+    """
+    Browsable listing of "hot" story clusters — the News-section discovery
+    entry point for StoryClusterView (previously only reachable via Home's
+    compact 🔥 pills or a hand-typed URL). Reuses get_hot_clusters()
+    UNCHANGED (the same query Home's Trending module already runs), just
+    with a wider default window and a higher limit — a page a user
+    deliberately navigates to should show more than Home's "right now"
+    widget's 48h/5-item slice.
+    """
+
+    template_name = "news/cluster_list.html"
+
+    HOUR_PRESETS = [(48, "Last 48 hours"), (168, "Last 7 days"), (720, "Last 30 days")]
+    DEFAULT_HOURS = 168
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        valid_hours = {h for h, _ in self.HOUR_PRESETS}
+        try:
+            hours = int(self.request.GET.get("hours", self.DEFAULT_HOURS))
+        except ValueError:
+            hours = self.DEFAULT_HOURS
+        if hours not in valid_hours:
+            hours = self.DEFAULT_HOURS
+
+        ctx["clusters"] = get_hot_clusters(limit=30, hours=hours)
+        ctx["active_hours"] = hours
+        ctx["hour_presets"] = self.HOUR_PRESETS
         return ctx

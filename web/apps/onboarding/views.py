@@ -9,7 +9,7 @@ from apps.catalog.models import Source
 
 from .models import Interest, Persona, UserSourceSubscription
 from .services import save_exclusions, save_interests
-from .source_submission import submit_source
+from .source_submission import submit_source, submit_youtube_source
 
 
 class PreferencesView(LoginRequiredMixin, TemplateView):
@@ -130,21 +130,37 @@ class SourcesView(LoginRequiredMixin, TemplateView):
 
 class AddSourceView(LoginRequiredMixin, View):
     """
-    POST /onboarding/sources/add/ — {feed_url, name, category}. Runs the
-    AI-relevance gate (via a Celery round-trip to the pipeline's
-    "interactive" queue, see apps.onboarding.source_submission) and shows
-    the result as a message banner — "live relevance feedback" per the
-    roadmap, just server-rendered rather than a client-side AJAX preview,
-    matching this project's existing no-JS-framework convention.
+    POST /onboarding/sources/add/ — {source_type, feed_url|channel_url,
+    name, category}. Runs the AI-relevance gate (via a Celery round-trip to
+    the pipeline's "interactive" queue, see apps.onboarding.source_submission)
+    and shows the result as a message banner — "live relevance feedback" per
+    the roadmap, just server-rendered rather than a client-side AJAX
+    preview, matching this project's existing no-JS-framework convention.
+
+    source_type is "rss" (default, backward-compatible with the original
+    form) or "youtube" — the two submission functions share every other
+    piece of logic (cap check, auto-subscribe), branching only on which
+    Celery task/field the request needs.
     """
 
     def post(self, request, *args, **kwargs):
-        result = submit_source(
-            request.user,
-            feed_url=request.POST.get("feed_url", ""),
-            name=request.POST.get("name", ""),
-            category=request.POST.get("category") or "developer_communities",
-        )
+        category = request.POST.get("category") or "developer_communities"
+
+        if request.POST.get("source_type") == "youtube":
+            result = submit_youtube_source(
+                request.user,
+                channel_url=request.POST.get("channel_url", ""),
+                name=request.POST.get("name", ""),
+                category=category,
+            )
+        else:
+            result = submit_source(
+                request.user,
+                feed_url=request.POST.get("feed_url", ""),
+                name=request.POST.get("name", ""),
+                category=category,
+            )
+
         if result["ok"]:
             messages.success(request, result["message"])
         else:

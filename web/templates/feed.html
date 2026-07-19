@@ -21,16 +21,17 @@
 {% endif %}
 
 {% if items %}
-  <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
-    {% for item in items %}
-      {% if item.video_id %}
-        {% include "components/_video_card.html" with video=item rank=item.rank reasoning=item.reasoning is_saved=item.is_saved is_hidden=item.is_hidden topics=item.topics only %}
-      {% else %}
-        {% include "components/_article_card.html" with article=item rank=item.rank reasoning=item.reasoning is_saved=item.is_saved is_hidden=item.is_hidden topics=item.topics only %}
-      {% endif %}
-    {% endfor %}
+  <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4" id="feed-items">
+    {% include "components/_feed_items.html" %}
   </div>
-  {% include "components/_pagination.html" %}
+  {% if page_obj.has_next %}
+    <div class="text-center mt-4" id="feed-show-more-wrap">
+      <button type="button" id="feed-show-more" class="btn btn-outline-primary"
+              data-next-page="{{ page_obj.next_page_number }}">
+        Show more <i class="bi bi-chevron-down"></i>
+      </button>
+    </div>
+  {% endif %}
 {% else %}
   {% include "components/_empty_state.html" with icon="bi-stars" title="Your feed is empty" message="Once new content matching your interests is ingested, it will show up here." cta_url="/" cta_label="Browse latest news" %}
 {% endif %}

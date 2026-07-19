@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: ai_news_test
+          POSTGRES_USER: ai_news_user
+          POSTGRES_PASSWORD: ci_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ai_news_user -d ai_news_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+psycopg2://ai_news_user:ci_test_password@localhost:5432/ai_news_test
+      REDIS_URL: redis://localhost:6379/0
+      GROQ_API_KEY: ci-placeholder-not-a-real-key
+      LLM_PROVIDER: groq
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create pgvector extension
+        run: |
+          PGPASSWORD=ci_test_password psql -h localhost -U ai_news_user -d ai_news_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+      - name: Set up Python 3.14 (pipeline)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install pipeline dependencies
+        run: uv sync --frozen
+
+      - name: Run pipeline test suite
+        run: uv run pytest -q
+
+      - name: Set up Python 3.13 (web)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install web dependencies
+        working-directory: web
+        run: pip install -r requirements.txt
+
+      - name: Run Django test suite
+        working-directory: web
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.dev
+          DJANGO_SECRET_KEY: ci-test-secret-key-not-for-production
+          DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+          DATABASE_URL: postgres://ai_news_user:ci_test_password@localhost:5432/ai_news_test
+          REDIS_URL: redis://localhost:6379/1
+          CELERY_BROKER_URL: redis://localhost:6379/0
+        run: python manage.py test

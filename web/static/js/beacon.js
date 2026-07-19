@@ -53,9 +53,13 @@
   }
 
   // ---- Impressions (IntersectionObserver) ---------------------------------
-  var cards = document.querySelectorAll("[data-content-type][data-content-id]");
-  if (cards.length && "IntersectionObserver" in window) {
-    var observer = new IntersectionObserver(
+  // observeCards() is exposed via window.ACBeacon.observeNew so cards
+  // injected later (e.g. My Feed's "Show More" button, see below) can be
+  // wired into the same observer instead of only ever seeing the cards
+  // present at script-load time.
+  var observer = null;
+  if ("IntersectionObserver" in window) {
+    observer = new IntersectionObserver(
       function (entries) {
         entries.forEach(function (entry) {
           if (!entry.isIntersecting) return;
@@ -73,10 +77,19 @@
       },
       { threshold: 0.5 }
     );
+  }
+
+  function observeCards(root) {
+    if (!observer) return;
+    var scope = root || document;
+    var cards = scope.querySelectorAll("[data-content-type][data-content-id]");
     cards.forEach(function (el) {
       observer.observe(el);
     });
   }
+
+  observeCards(document);
+  window.ACBeacon = { observeNew: observeCards };
 
   // ---- Clicks ---------------------------------------------------------------
   document.addEventListener("click", function (e) {
@@ -216,4 +229,48 @@
         /* best-effort — leave the button in its current visual state */
       });
   });
+
+  // ---- My Feed "Show More" (progressive pagination, no full reload) -----
+  // FeedView's ?fragment=1 branch returns {html, has_next, next_page} JSON
+  // (same all-JSON convention as Save/Hide/Follow above) — no HTML-fragment-
+  // with-header response exists anywhere else in this codebase, so this is
+  // deliberately kept consistent with the established pattern rather than
+  // introducing a second one.
+  var showMoreBtn = document.getElementById("feed-show-more");
+  if (showMoreBtn) {
+    showMoreBtn.addEventListener("click", function () {
+      var nextPage = showMoreBtn.dataset.nextPage;
+      if (!nextPage) return;
+
+      showMoreBtn.disabled = true;
+      var originalHtml = showMoreBtn.innerHTML;
+      showMoreBtn.innerHTML = "Loading…";
+
+      fetch("?fragment=1&page=" + encodeURIComponent(nextPage))
+        .then(function (r) {
+          return r.ok ? r.json() : null;
+        })
+        .then(function (data) {
+          if (!data) return;
+          var container = document.getElementById("feed-items");
+          if (container && data.html) {
+            container.insertAdjacentHTML("beforeend", data.html);
+            observeCards(container); // wire impressions for the newly-injected cards
+          }
+          if (data.has_next && data.next_page) {
+            showMoreBtn.dataset.nextPage = data.next_page;
+          } else {
+            var wrap = document.getElementById("feed-show-more-wrap");
+            if (wrap) wrap.remove();
+          }
+        })
+        .catch(function () {
+          /* best-effort — button stays enabled below so the user can retry */
+        })
+        .finally(function () {
+          showMoreBtn.disabled = false;
+          showMoreBtn.innerHTML = originalHtml;
+        });
+    });
+  }
 })();

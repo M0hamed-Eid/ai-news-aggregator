@@ -1,0 +1,201 @@
+# =============================================================================
+# AI News Aggregator — PRODUCTION Docker Compose
+# =============================================================================
+# Runs on the Oracle Cloud "Always Free" VM (see docs/DEPLOYMENT.md). A
+# SEPARATE file from docker/docker-compose.yml (dev) on purpose — the dev
+# compose file stays untouched so local workflows are never disrupted.
+#
+# What's deliberately NOT here, vs. the dev compose file:
+#   - `db` (Postgres) — production Postgres is Neon (managed, external,
+#     pgvector-capable free tier). This project's own docker-compose.yml
+#     `db` service stays dev-only.
+#   - `pgadmin` — dev-only, already commented as such in docker-compose.yml.
+#
+# What's added, matching README.md's own documented 4-process local dev
+# model (main worker / interactive worker / stt worker / beat, each
+# `--pool=solo` — see README.md:230-269) plus the web app and a reverse
+# proxy:
+#   web, worker-default, worker-interactive, worker-stt, beat, redis, caddy
+#
+# Usage:
+#   docker compose -f docker/docker-compose.prod.yml up -d --build
+#   docker compose -f docker/docker-compose.prod.yml logs -f <service>
+#   docker compose -f docker/docker-compose.prod.yml down
+#
+# IMPORTANT: the top-level `name:` below pins this to its own Compose
+# project ("ai_news_prod"), distinct from docker-compose.yml's (dev)
+# project. Both files live in this same docker/ directory, and Docker
+# Compose derives a project name from the CONTAINING DIRECTORY by default
+# when none is set -- without this explicit name, this file's `redis`
+# service collides with the dev file's `redis` service (same default
+# project name, same service name) and `up` will RECREATE/replace the dev
+# container instead of creating a separate one. Confirmed live during this
+# project's own Phase 6 verification -- see .wolf/buglog.json deploy-003.
+# =============================================================================
+
+name: ai_news_prod
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Redis — Celery broker/result-backend (DB 0) + Django cache (DB 1), exactly
+  # the same DB-index split as local dev (see .wolf/cerebrum.md's DB-index-
+  # collision note) — since this Redis is self-hosted here (not a managed
+  # single-DB service), the existing REDIS_URL/CELERY_BROKER_URL convention
+  # from .env.example / web/.env.example works completely unchanged, just
+  # pointed at hostname `redis` instead of 127.0.0.1.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - backend
+
+  # ---------------------------------------------------------------------------
+  # Django web app — gunicorn behind Caddy. Own image (web/Dockerfile), own
+  # Python version, own dependency set — see that Dockerfile's header comment.
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../web/.env.prod
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ---------------------------------------------------------------------------
+  # Celery — main worker (default queue: scrape/stt-dispatch/embed/enrich/
+  # deep-video/cluster/score/digest/affinity/ranking). Same image as
+  # worker-interactive/worker-stt/beat below; only `command:` differs.
+  # ---------------------------------------------------------------------------
+  worker-default:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env.prod
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ---------------------------------------------------------------------------
+  # Celery — interactive queue ONLY (search_tasks.embed_query_task,
+  # source_submission_tasks.evaluate_and_register_source_task). Kept as its
+  # own persistent process/container specifically so semantic search and
+  # "add a source" get the exact same live, synchronous verdict they get
+  # locally — this is the whole reason the Oracle VM was chosen over a
+  # single-service PaaS (see docs/DEPLOYMENT.md's architecture note).
+  # ---------------------------------------------------------------------------
+  worker-interactive:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["uv", "run", "celery", "-A", "app.celery_app:celery_app", "worker", "--pool=solo", "--loglevel=info", "-Q", "interactive", "-n", "interactive-worker@%h"]
+    env_file:
+      - ../.env.prod
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ---------------------------------------------------------------------------
+  # Celery — stt queue ONLY (app/tasks/stt_tasks.py transcribe_video_task).
+  # Runs from the Oracle VM's datacenter IP, same pre-existing caveat this
+  # project already documents for yt-dlp/faster-whisper (see
+  # docs/DEPLOYMENT.md's Known Limitations section) — not solved by this
+  # compose file, just not silently hidden either.
+  # ---------------------------------------------------------------------------
+  worker-stt:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["uv", "run", "celery", "-A", "app.celery_app:celery_app", "worker", "--pool=solo", "--loglevel=info", "-Q", "stt", "-n", "stt-worker@%h"]
+    env_file:
+      - ../.env.prod
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ---------------------------------------------------------------------------
+  # Celery beat — the scheduler. Code-defined crontab (app/celery_app.py's
+  # beat_schedule), completely unmodified from local dev; no django-celery-
+  # beat, no DB-backed schedule table, no external scheduling service at all.
+  # ---------------------------------------------------------------------------
+  beat:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["uv", "run", "celery", "-A", "app.celery_app:celery_app", "beat", "--loglevel=info"]
+    env_file:
+      - ../.env.prod
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ---------------------------------------------------------------------------
+  # Caddy — reverse proxy + automatic HTTPS (Let's Encrypt). Oracle doesn't
+  # terminate TLS for you the way a PaaS does, so this replaces that piece.
+  # ---------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      # Read from docker/.env (docker compose auto-loads a .env file in the
+      # same directory as the compose file) — see docker/.env.prod.example.
+      SITE_DOMAIN: ${SITE_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+    networks:
+      - backend
+
+volumes:
+  redis_data:
+    driver: local
+  hf_cache:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+
+networks:
+  backend:
+    driver: bridge

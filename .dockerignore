@@ -1,0 +1,17 @@
+.venv/
+.git/
+.github/
+.wolf/
+.claude/
+docs/
+web/
+docker/
+scripts/
+*.pyc
+__pycache__/
+.pytest_cache/
+.env
+.env.*
+!.env.example
+htmlcov/
+*.md

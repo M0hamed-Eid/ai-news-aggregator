@@ -20,22 +20,55 @@ FALLBACK_LABELS = {
     "youtube": "YouTube",
 }
 
+# Mirrors web/apps/catalog/templatetags/source_display.py's _SOURCE_ARTWORK
+# map by filename (same source-branding system, extended to email). This is
+# a deliberate, precedented small duplication across the Django/pipeline
+# ORM boundary — same pattern as FALLBACK_COLORS/FALLBACK_LABELS above,
+# which already duplicate naming info that also lives in Django's
+# Article.SOURCE_LABELS. NOTE: these ship as .png today (placeholder art,
+# see docs/branding/) — most modern webmail (Gmail, Apple Mail) renders
+# inline <img src="*.png"> fine, but Outlook desktop's Word-based renderer
+# does not. When real generated art replaces these placeholders, prefer a
+# .png/.jpg export for the email-facing copies for universal client support.
+SOURCE_ARTWORK_FILENAMES = {
+    "blog_openai": "blog_openai.png",
+    "blog_anthropic": "blog_anthropic.png",
+    "arxiv": "arxiv.png",
+    "github_release": "github_release.png",
+    "youtube": "youtube.png",
+    "reddit": "reddit.png",
+    "huggingface_model": "huggingface_model.png",
+    "government_us": "government_us.png",
+    "government_uk": "government_uk.png",
+    "government_nist": "government_nist.png",
+    "funding_crunchbase": "funding_crunchbase.png",
+}
+
 
 def _esc(text: Optional[str]) -> str:
     return html_lib.escape(text or "")
 
 
-def _render_media(article: RankedArticleDetail) -> str:
+def _render_media(article: RankedArticleDetail, base_url: Optional[str] = None) -> str:
     """
     Real image if we have one (og:image for articles, YouTube thumbnail for
-    videos) — otherwise a clean colored banner. No AI generation, no image
-    hosting needed, always renders something.
+    videos) — otherwise branded source artwork (if base_url is configured,
+    needed since email images must be absolute URLs), else the original
+    clean colored banner. Always renders something, never a broken image.
     """
     if article.image_url:
         return (
             f'<img src="{_esc(article.image_url)}" alt="{_esc(article.title)}" '
             f'width="536" style="width:100%; max-width:536px; height:auto; '
             f'display:block; border-radius:8px;" />'
+        )
+    filename = SOURCE_ARTWORK_FILENAMES.get(article.article_type)
+    if base_url and filename:
+        artwork_url = f"{base_url}/static/img/sources/{filename}"
+        return (
+            f'<img src="{_esc(artwork_url)}" alt="{_esc(article.title)}" '
+            f'width="536" style="width:100%; max-width:536px; height:180px; '
+            f'object-fit:cover; display:block; border-radius:8px;" />'
         )
     color = FALLBACK_COLORS.get(article.article_type, "#4a4a4a")
     label = FALLBACK_LABELS.get(article.article_type, "AI News")
@@ -48,7 +81,7 @@ def _render_media(article: RankedArticleDetail) -> str:
     )
 
 
-def _render_card(article: RankedArticleDetail) -> str:
+def _render_card(article: RankedArticleDetail, base_url: Optional[str] = None) -> str:
     is_video = article.article_type == "youtube"
     cta_label = "Watch the video" if is_video else "Read the article"
     unit = "watch" if is_video else "read"
@@ -57,7 +90,7 @@ def _render_card(article: RankedArticleDetail) -> str:
     return f"""
     <tr>
       <td style="padding:20px 32px;">
-        {_render_media(article)}
+        {_render_media(article, base_url)}
         <div style="padding-top:16px; font-family:Arial, sans-serif;">
           <div style="font-size:12px; color:#757575; text-transform:uppercase; letter-spacing:0.5px;">
             {_esc(source_label)} &nbsp;&middot;&nbsp; {article.reading_minutes} min {unit}
@@ -80,8 +113,17 @@ def _render_card(article: RankedArticleDetail) -> str:
     """
 
 
-def render_email_html(response: EmailDigestResponse) -> str:
-    cards = "".join(_render_card(a) for a in response.articles)
+def render_email_html(response: EmailDigestResponse, base_url: Optional[str] = None) -> str:
+    """
+    base_url (optional): the Django site's public base URL, used to build
+    absolute source-artwork image URLs (required for email — relative
+    static paths don't resolve in a mail client). Pass digest_service.py's
+    existing _DJANGO_BASE_URL through at the call site rather than this
+    module reading its own os.getenv — keeps one source of truth for that
+    value instead of duplicating the env-var lookup. Omit it (default
+    None) to keep the original solid-color-banner fallback behavior.
+    """
+    cards = "".join(_render_card(a, base_url) for a in response.articles)
 
     return f"""<!DOCTYPE html>
 <html>

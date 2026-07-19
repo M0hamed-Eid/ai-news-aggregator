@@ -71,6 +71,21 @@ def get_related_items(content_type: str, content_id: int, limit: int = 4):
     return resolved
 
 
+def get_cluster_member_count(content_type: str, content_id: int) -> int:
+    """
+    Cheap companion to get_related_items/get_full_story: just the total
+    cluster size (including the item itself), for a "Part of a story with
+    N related items" banner. Deliberately a lightweight .count() rather
+    than resolving every member to a real Article/YoutubeVideo object
+    (get_full_story's cost) — callers that only need the number, not the
+    objects, should use this instead.
+    """
+    member = ContentClusterMember.objects.filter(content_type=content_type, content_id=content_id).first()
+    if member is None:
+        return 0
+    return ContentClusterMember.objects.filter(cluster_id=member.cluster_id).count()
+
+
 def get_enrichment(content_type: str, content_id: int):
     """The ContentEnrichment row for one item, or None if not yet enriched."""
     return ContentEnrichment.objects.filter(content_type=content_type, content_id=content_id).first()

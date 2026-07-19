@@ -113,6 +113,14 @@
   {% endif %}
 {% endif %}
 
+{% if cluster_member_count > 1 %}
+<a href="{% url 'news:story_cluster' 'youtube_video' video.pk %}"
+   class="alert alert-light border d-flex justify-content-between align-items-center mt-4 mb-0 text-decoration-none">
+  <span><i class="bi bi-fire text-warning me-1"></i> Part of a story with {{ cluster_member_count|add:"-1" }} related item{{ cluster_member_count|add:"-1"|pluralize }}</span>
+  <span class="text-primary fw-semibold">View all coverage <i class="bi bi-arrow-right"></i></span>
+</a>
+{% endif %}
+
 {% if related %}
 <h2 class="h5 app-section-title mt-5 mb-3"><i class="bi bi-collection text-primary"></i> Related</h2>
 <div class="row row-cols-1 row-cols-md-2 row-cols-lg-4 g-3">

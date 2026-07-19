@@ -3,6 +3,11 @@
 Complete guide to spinning up the database, running the pipeline, and
 verifying everything works end to end.
 
+**Deploying to production?** See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+for the full $0/month deployment guide (Oracle Cloud + Docker Compose
+primary path, Render + GitHub Actions fallback path, database migration
+with zero data loss, redeploy/rollback procedures, and known limitations).
+
 ---
 
 ## Project Layout

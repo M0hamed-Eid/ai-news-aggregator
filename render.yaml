@@ -1,0 +1,58 @@
+# Render Blueprint — FALLBACK deployment path only (see docs/DEPLOYMENT.md's
+# "Fallback path" section). The primary recommendation is an Oracle Cloud
+# Always-Free VM running docker/docker-compose.prod.yml (all 6 services,
+# including a real persistent interactive-queue worker, so source
+# submission and search keep their exact synchronous local behavior).
+#
+# This file only stands up the Django web process on Render's free tier —
+# it does NOT run any Celery worker or beat (Render has no free background
+# worker; see the scheduler evaluation in docs/DEPLOYMENT.md). If you're
+# using this path: the scheduled pipeline runs via GitHub Actions
+# (.github/workflows/pipeline.yml) instead of Celery beat, and semantic
+# search / source submission will hit their existing timeout-based graceful
+# fallback in production unless you also run an interactive worker yourself
+# (see docs/DEPLOYMENT.md's "optional manual worker" script) — this
+# Blueprint does not change that product behavior, it just doesn't solve it
+# for free the way the Oracle path does.
+#
+# Docker-based (env: docker), not Render's native Python buildpack — reuses
+# web/Dockerfile as-is, matching this project's "prefer Docker" preference
+# even on the fallback path.
+
+services:
+  - type: web
+    name: ai-news-aggregator-web
+    env: docker
+    dockerfilePath: ./web/Dockerfile
+    dockerContext: ./web
+    plan: free
+    healthCheckPath: /healthz/
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.prod
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_SECRET_KEY
+        sync: false
+      - key: DJANGO_ALLOWED_HOSTS
+        sync: false
+      - key: DJANGO_CSRF_TRUSTED_ORIGINS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: CELERY_BROKER_URL
+        sync: false
+      - key: GMAIL_ADDRESS
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PUBLISHABLE_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_ID_PRO
+        sync: false

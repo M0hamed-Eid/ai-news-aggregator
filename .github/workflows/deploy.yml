@@ -1,0 +1,33 @@
+name: Deploy (Oracle Cloud primary path)
+
+# Only relevant if you're using the primary Oracle Cloud VM deployment path
+# (see docs/DEPLOYMENT.md). If you're on the Render fallback path instead,
+# Render's own native "auto-deploy on push" replaces this entirely -- delete
+# or disable this workflow.
+#
+# Required repo secrets:
+#   DEPLOY_HOST       - the VM's public IP or hostname
+#   DEPLOY_USER       - SSH user on the VM
+#   DEPLOY_SSH_KEY    - private key for that user (public key installed on the VM)
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd ai-news-aggregator
+            git pull
+            docker compose -f docker/docker-compose.prod.yml up -d --build

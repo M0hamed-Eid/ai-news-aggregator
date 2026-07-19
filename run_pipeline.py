@@ -484,9 +484,21 @@ def run_scraping_phases(
         success = _run_article_phase("RSS Sources", scraper, hours, dry_run, result)
         attempts.extend((source_id, success) for source_id, _ in rss_rows)
 
+    from app.database.repositories.youtube_repository import YoutubeRepository
+
     for source_id, name, handler, cfg in handler_rows:
         scraper = HANDLER_BUILDERS[handler](cfg)
-        success = _run_article_phase(name, scraper, hours, dry_run, result)
+        # BUGFIX: a user-submitted source with handler="youtube" (custom
+        # YouTube channel sources) is NOT excluded from this generic loop —
+        # only the curated row is excluded, by key, in the `sources` filter
+        # above. Without repo_cls=YoutubeRepository here, its ScrapedArticle
+        # objects (which carry video_id/channel_id/transcript_segments)
+        # would insert into `articles` via ArticleRepository's default
+        # (wrong dedup key: url instead of video_id; also silently skips
+        # the STT-queue side effect for caption-less videos). See
+        # .wolf/buglog.json for the full writeup.
+        repo_cls = YoutubeRepository if handler == "youtube" else None
+        success = _run_article_phase(name, scraper, hours, dry_run, result, repo_cls=repo_cls)
         attempts.append((source_id, success))
 
     if not dry_run and attempts:
@@ -910,7 +922,7 @@ def run_digest_phase(
     dead debug scaffolding, not something worth keeping in a per-user loop.
     """
     from app.config import config
-    from app.services.digest_service import DigestService
+    from app.services.digest_service import DigestService, _DJANGO_BASE_URL
     from app.services.email_sender import EmailSender
     from app.services.email_template import render_email_html
 
@@ -941,7 +953,12 @@ def run_digest_phase(
         response = recipient_digest.response
         to_address = recipient.profile.email
 
-        html_body = render_email_html(response)
+        # base_url reuses digest_service's EXISTING _DJANGO_BASE_URL (already
+        # used for /r/<token>/ click-tracking links in this same response) —
+        # no new env var, no duplicated os.getenv call. Lets the digest's
+        # per-source fallback banner use real branded artwork instead of a
+        # solid color when a source has no article.image_url of its own.
+        html_body = render_email_html(response, base_url=_DJANGO_BASE_URL)
         text_body = response.to_markdown()
 
         if skip_email:

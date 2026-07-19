@@ -1,0 +1,21 @@
+# Reverse proxy + automatic HTTPS for the production Django app.
+#
+# {$SITE_DOMAIN} — set via the environment (docker-compose.prod.yml's caddy
+# service reads it from the shell, e.g. `SITE_DOMAIN=app.example.com` or a
+# free DDNS hostname such as yourname.duckdns.org — see docs/DEPLOYMENT.md).
+# Caddy requests/renews a Let's Encrypt cert for it automatically; no manual
+# certbot step.
+
+{$SITE_DOMAIN} {
+	reverse_proxy web:8000
+
+	encode gzip
+
+	header {
+		# Django's own SECURE_* settings (web/config/settings/prod.py) already
+		# add HSTS/nosniff/etc. at the app layer — this only adds the one
+		# header Django can't set for itself: hiding the proxy from casual
+		# fingerprinting is Caddy's job, not Django's.
+		-Server
+	}
+}

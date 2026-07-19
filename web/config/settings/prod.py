@@ -22,3 +22,31 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# Django 4+ requires the real scheme+host explicitly once behind HTTPS —
+# ALLOWED_HOSTS alone isn't enough for POST/CSRF checks (login, source
+# submission, Stripe checkout redirect, etc.). Comma-separated, full
+# origins including scheme, e.g. "https://app.example.com,https://example.com".
+CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
+
+# No MEDIA_ROOT/MEDIA_URL and no CORS package on purpose — this app has zero
+# file-upload/media features (confirmed via repo-wide grep before writing
+# this deployment plan) and is a same-origin, server-rendered Django-
+# template app with no separate SPA origin, so there is nothing for either
+# to do. Revisit only if a future milestone adds user-uploaded files or a
+# separate frontend origin.
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": env("DJANGO_LOG_LEVEL", default="INFO"),
+    },
+    "loggers": {
+        "django": {"handlers": ["console"], "level": env("DJANGO_LOG_LEVEL", default="INFO"), "propagate": False},
+    },
+}

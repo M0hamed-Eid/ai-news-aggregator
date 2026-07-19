@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load source_display %}
 {% block title %}Sources · AI Compass{% endblock %}
 {% block content %}
 <h1 class="h3 app-section-title mb-1"><i class="bi bi-collection text-primary"></i> Sources</h1>
@@ -6,14 +7,29 @@
 
 <div class="app-card p-4 mb-4">
   <h2 class="h6 text-uppercase text-muted mb-3">Add your own source</h2>
-  <p class="text-muted small mb-3">Submit any AI-focused RSS/Atom feed. We check it's actually AI-relevant before adding it — off-topic feeds are rejected with a reason.</p>
-  <form method="post" action="{% url 'onboarding:add_source' %}" class="row g-2">
+  <p class="text-muted small mb-3">Submit an AI-focused RSS/Atom feed or a YouTube channel. We check it's actually AI-relevant before adding it — off-topic feeds are rejected with a reason.</p>
+  <form method="post" action="{% url 'onboarding:add_source' %}" class="row g-2" id="add-source-form">
     {% csrf_token %}
-    <div class="col-12 col-md-5">
-      <input type="url" name="feed_url" class="form-control" placeholder="Feed URL (RSS/Atom)" required>
+    <div class="col-12 d-flex flex-wrap gap-2 mb-1">
+      <label class="app-chip">
+        <input type="radio" name="source_type" value="rss" checked>
+        <i class="bi bi-check-lg chip-check"></i> RSS / Atom Feed
+      </label>
+      <label class="app-chip">
+        <input type="radio" name="source_type" value="youtube">
+        <i class="bi bi-check-lg chip-check"></i> YouTube Channel
+      </label>
     </div>
+
+    <div class="col-12 col-md-5 rss-field">
+      <input type="url" name="feed_url" class="form-control" placeholder="Feed URL (RSS/Atom)">
+    </div>
+    <div class="col-12 col-md-5 youtube-field">
+      <input type="text" name="channel_url" class="form-control" placeholder="Channel URL (e.g. youtube.com/@handle)">
+    </div>
+
     <div class="col-12 col-md-3">
-      <input type="text" name="name" class="form-control" placeholder="Display name" required>
+      <input type="text" name="name" class="form-control" placeholder="Display name (optional for YouTube)">
     </div>
     <div class="col-8 col-md-3">
       <select name="category" class="form-select">
@@ -138,7 +154,11 @@
                   <input type="checkbox" class="form-check-input" name="sources" value="{{ source.key }}" {% if source.key not in excluded_sources %}checked{% endif %}>
                 </td>
                 <td>
-                  <div class="fw-semibold">{{ source.name }}</div>
+                  <div class="d-flex align-items-center gap-2">
+                    <img src="{{ source.key|source_artwork }}" alt="" width="28" height="28"
+                         class="rounded flex-shrink-0" style="object-fit: cover;">
+                    <div class="fw-semibold">{{ source.name }}</div>
+                  </div>
                 </td>
                 <td><span class="badge badge-category">{{ source.category_label }}</span></td>
                 <td><span class="text-uppercase small text-muted">{{ source.adapter_type }}</span></td>

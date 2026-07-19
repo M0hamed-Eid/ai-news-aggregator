@@ -71,33 +71,36 @@ class SourceRepository(BaseRepository[Source]):
         """Every visibility='user' source, regardless of is_active — the monthly re-validation job reads this."""
         return self.db.query(Source).filter(Source.visibility == "user").all()
 
-    def create_user_source(
+    def _insert_source(
         self,
         *,
         key: str,
         name: str,
         category: str,
+        adapter_type: str,
+        config: dict,
         feed_url: str,
         created_by: int,
         schedule_hours: int,
         validation_status: str,
         validation_score: float,
+        handler: Optional[str] = None,
     ) -> Source:
         """
-        Register a new user-submitted source, already past the relevance
-        gate (this method does not itself validate — see
-        app/services/relevance_gate.py, the only caller). One feed per row,
-        config['feeds'] holding exactly one feed-definition dict so the
-        existing run_scraping_phases() dispatch (which flattens every
-        adapter_type='rss' row's config['feeds'] into one RssFeedScraper
-        call) picks it up with zero changes.
+        Shared row-construction helper — create_user_source (RSS) and
+        create_user_youtube_source differ only in adapter_type/handler/
+        config, so the actual insert/commit/log logic lives here once.
+        Neither caller validates the relevance gate itself (see
+        app/services/relevance_gate.py, called by the two Celery tasks in
+        app/tasks/source_submission_tasks.py before either of these run).
         """
         source = Source(
             key=key,
             name=name,
             category=category,
-            adapter_type="rss",
-            config={"feeds": [{"url": feed_url, "source": key, "label": name}]},
+            adapter_type=adapter_type,
+            handler=handler,
+            config=config,
             schedule_hours=schedule_hours,
             is_active=True,
             created_by=created_by,
@@ -111,10 +114,81 @@ class SourceRepository(BaseRepository[Source]):
         self.db.commit()
         self.db.refresh(source)
         logger.info(
-            "SourceRepository: created user source id=%s key=%r feed_url=%r (created_by=%s, validation=%s/%.3f)",
-            source.id, key, feed_url, created_by, validation_status, validation_score,
+            "SourceRepository: created user source id=%s key=%r feed_url=%r adapter_type=%r handler=%r "
+            "(created_by=%s, validation=%s/%.3f)",
+            source.id, key, feed_url, adapter_type, handler, created_by, validation_status, validation_score,
         )
         return source
+
+    def create_user_source(
+        self,
+        *,
+        key: str,
+        name: str,
+        category: str,
+        feed_url: str,
+        created_by: int,
+        schedule_hours: int,
+        validation_status: str,
+        validation_score: float,
+    ) -> Source:
+        """
+        Register a new user-submitted RSS/Atom source. One feed per row,
+        config['feeds'] holding exactly one feed-definition dict so the
+        existing run_scraping_phases() dispatch (which flattens every
+        adapter_type='rss' row's config['feeds'] into one RssFeedScraper
+        call) picks it up with zero changes.
+        """
+        return self._insert_source(
+            key=key,
+            name=name,
+            category=category,
+            adapter_type="rss",
+            config={"feeds": [{"url": feed_url, "source": key, "label": name}]},
+            feed_url=feed_url,
+            created_by=created_by,
+            schedule_hours=schedule_hours,
+            validation_status=validation_status,
+            validation_score=validation_score,
+        )
+
+    def create_user_youtube_source(
+        self,
+        *,
+        key: str,
+        name: str,
+        category: str,
+        channel_id: str,
+        feed_url: str,
+        created_by: int,
+        schedule_hours: int,
+        validation_status: str,
+        validation_score: float,
+    ) -> Source:
+        """
+        Register a new user-submitted YouTube channel source. Writes the
+        SAME config shape HANDLER_BUILDERS["youtube"] already expects for
+        the curated channel row (config["channels"]: a list of
+        {"channel_id","name"} dicts) — run_scraping_phases() dispatches it
+        through the existing YouTubeScraper with no new scraper code.
+        feed_url is the channel's own video-list Atom feed URL (see
+        app/services/youtube_channel_resolver.py) — reused purely as the
+        canonicalization key exactly like an RSS source's feed_url, not a
+        feed anyone reads directly.
+        """
+        return self._insert_source(
+            key=key,
+            name=name,
+            category=category,
+            adapter_type="api",
+            handler="youtube",
+            config={"channels": [{"channel_id": channel_id, "name": name}]},
+            feed_url=feed_url,
+            created_by=created_by,
+            schedule_hours=schedule_hours,
+            validation_status=validation_status,
+            validation_score=validation_score,
+        )
 
     # =========================================================================
     # Run tracking

@@ -23,11 +23,43 @@ from apps.onboarding.models import UserSourceSubscription
 logger = logging.getLogger(__name__)
 
 _SUBMIT_TASK_NAME = "app.tasks.source_submission_tasks.evaluate_and_register_source_task"
+_SUBMIT_YOUTUBE_TASK_NAME = "app.tasks.source_submission_tasks.evaluate_and_register_youtube_source_task"
 _SUBMIT_TIMEOUT_SECONDS = 20.0  # feed fetch + embedding ~10 short items — generous but bounded
+_SUBMIT_YOUTUBE_TIMEOUT_SECONDS = 25.0  # + a channel-resolution (yt-dlp) step ahead of the same gate
 
 FREE_CUSTOM_SOURCE_LIMIT = 3
 
 _celery_client = Celery(broker=settings.CELERY_BROKER_URL, backend=settings.CELERY_BROKER_URL)
+
+
+def _check_source_limit(user):
+    """
+    Returns an error dict if the user is at their custom-source cap, else
+    None. Shared by submit_source/submit_youtube_source below — the cap
+    counts every source type a user has created together (Source.objects.
+    filter(created_by=...)), so this check needs writing only once.
+    """
+    if user_can(user, "unlimited_custom_sources"):
+        return None
+    existing_count = Source.objects.filter(created_by=user.id).count()
+    if existing_count >= FREE_CUSTOM_SOURCE_LIMIT:
+        return {
+            "ok": False,
+            "message": f"Free accounts can add up to {FREE_CUSTOM_SOURCE_LIMIT} custom sources — upgrade to Pro for unlimited.",
+        }
+    return None
+
+
+def _finalize(user, result: dict) -> dict:
+    """
+    Shared post-task handling for both submission types: auto-subscribe on
+    a real source_id, normalize the {ok, status, message, score} shape
+    returned to the view.
+    """
+    if result.get("source_id") is not None:
+        UserSourceSubscription.objects.get_or_create(profile=user.profile, source_id=result["source_id"])
+    ok = result["status"] in ("accepted", "accepted_low_trust", "already_exists")
+    return {"ok": ok, "status": result["status"], "message": result["message"], "score": result.get("score")}
 
 
 def submit_source(user, feed_url: str, name: str, category: str) -> dict:
@@ -40,13 +72,9 @@ def submit_source(user, feed_url: str, name: str, category: str) -> dict:
     if not feed_url or not name:
         return {"ok": False, "message": "Both a feed URL and a name are required."}
 
-    if not user_can(user, "unlimited_custom_sources"):
-        existing_count = Source.objects.filter(created_by=user.id).count()
-        if existing_count >= FREE_CUSTOM_SOURCE_LIMIT:
-            return {
-                "ok": False,
-                "message": f"Free accounts can add up to {FREE_CUSTOM_SOURCE_LIMIT} custom sources — upgrade to Pro for unlimited.",
-            }
+    limit_error = _check_source_limit(user)
+    if limit_error is not None:
+        return limit_error
 
     try:
         async_result = _celery_client.send_task(
@@ -62,8 +90,41 @@ def submit_source(user, feed_url: str, name: str, category: str) -> dict:
         logger.warning("submit_source: relevance gate call failed/timed out for %r — %s", feed_url, exc)
         return {"ok": False, "message": "Couldn't validate that feed right now — please try again in a moment."}
 
-    if result.get("source_id") is not None:
-        UserSourceSubscription.objects.get_or_create(profile=user.profile, source_id=result["source_id"])
+    return _finalize(user, result)
 
-    ok = result["status"] in ("accepted", "accepted_low_trust", "already_exists")
-    return {"ok": ok, "status": result["status"], "message": result["message"], "score": result.get("score")}
+
+def submit_youtube_source(user, channel_url: str, name: str, category: str) -> dict:
+    """
+    YouTube-channel mirror of submit_source() — same {ok, message} shape,
+    same shared cap-check/auto-subscribe helpers above. Channel resolution
+    and the AI-relevance gate both happen pipeline-side (never in Django —
+    Django stays a Celery client only, no yt-dlp/ML stack), via a
+    different Celery task; see app/tasks/source_submission_tasks.py.
+    Unlike RSS, `name` is optional here — the resolved channel's own
+    display name is used as a fallback if left blank (handled server-side
+    in the Celery task, not here).
+    """
+    channel_url = (channel_url or "").strip()
+    name = (name or "").strip()
+    if not channel_url:
+        return {"ok": False, "message": "A channel URL is required."}
+
+    limit_error = _check_source_limit(user)
+    if limit_error is not None:
+        return limit_error
+
+    try:
+        async_result = _celery_client.send_task(
+            _SUBMIT_YOUTUBE_TASK_NAME,
+            kwargs={
+                "channel_url": channel_url, "name": name, "category": category,
+                "submitted_by_user_id": user.id,
+            },
+            queue="interactive",
+        )
+        result = async_result.get(timeout=_SUBMIT_YOUTUBE_TIMEOUT_SECONDS)
+    except Exception as exc:
+        logger.warning("submit_youtube_source: relevance gate call failed/timed out for %r — %s", channel_url, exc)
+        return {"ok": False, "message": "Couldn't validate that channel right now — please try again in a moment."}
+
+    return _finalize(user, result)

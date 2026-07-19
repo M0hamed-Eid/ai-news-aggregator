@@ -427,3 +427,40 @@ a {
     border-radius: 0.5rem;
   }
 }
+
+/* ---------------------------------------------------------------------- */
+/* Wide-viewport container                                                */
+/* Bootstrap's stock .container caps at 1320px from 1400px up, which reads */
+/* as excessive empty side margin on real desktop/wide-monitor viewports   */
+/* (1920x1080, 2560x1440). These two extra tiers widen it further while    */
+/* leaving every default Bootstrap breakpoint below 1600px untouched.      */
+/* Applied to .container globally (not just <main>) so the navbar/footer   */
+/* stay visually aligned with page content at these widths.                */
+/* ---------------------------------------------------------------------- */
+
+@media (min-width: 1600px) {
+  .container {
+    max-width: 1520px;
+  }
+}
+
+@media (min-width: 2200px) {
+  .container {
+    max-width: 1800px;
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Add-source form — RSS vs. YouTube field toggle                         */
+/* Pure CSS :has() (same pattern already used by .app-chip above) instead */
+/* of onchange-JS class-toggling — matches this project's established     */
+/* preference for radio/checkbox-driven visual state.                     */
+/* ---------------------------------------------------------------------- */
+
+#add-source-form:has(input[name="source_type"][value="youtube"]:checked) .rss-field {
+  display: none;
+}
+
+#add-source-form:has(input[name="source_type"][value="rss"]:checked) .youtube-field {
+  display: none;
+}

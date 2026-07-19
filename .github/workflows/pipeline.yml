@@ -1,0 +1,87 @@
+name: Scheduled pipeline (Render fallback path only)
+
+# Only needed on the Render fallback deployment path (see docs/DEPLOYMENT.md)
+# -- the primary Oracle Cloud path runs Celery beat persistently and
+# unmodified instead, which is a strictly better fit once real persistent
+# compute exists (see the scheduler evaluation in the approved deployment
+# plan / .wolf/cerebrum.md's 2026-07-19 decision-log entry). Disable this
+# workflow entirely if you're on the Oracle path.
+#
+# Reproduces app/celery_app.py's beat_schedule on the exact same cadence,
+# by calling the same underlying, already-tested functions directly instead
+# of through Celery -- no new business logic, pure scheduling plumbing.
+#
+# Required repo secrets: DATABASE_URL, REDIS_URL, GROQ_API_KEY,
+# GMAIL_ADDRESS, GMAIL_APP_PASSWORD (same values as .env.prod).
+
+on:
+  schedule:
+    # Full pipeline: scrape -> stt-dispatch -> embed -> digest -> deep-video
+    # -> cluster -> score -> trends. Matches beat_schedule's
+    # "run-full-pipeline-every-6-hours".
+    - cron: "0 */6 * * *"
+    # Nightly affinity aggregation (3:00 UTC).
+    - cron: "0 3 * * *"
+    # Nightly profile-vector computation (3:15 UTC).
+    - cron: "15 3 * * *"
+    # Ranking, every 3 hours.
+    - cron: "30 */3 * * *"
+    # Monthly user-source revalidation (04:00 UTC on the 1st).
+    - cron: "0 4 1 * *"
+    # Weekly trend report (06:00 UTC on Mondays).
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Run a specific job instead of inferring from schedule"
+        required: false
+        type: choice
+        options: [full_pipeline, affinity, profile_vectors, ranking, source_revalidation, trend_report]
+
+jobs:
+  run-job:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      REDIS_URL: ${{ secrets.REDIS_URL }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv sync --frozen --no-dev
+
+      - name: Determine which job to run
+        id: which
+        run: |
+          if [ -n "${{ github.event.inputs.job }}" ]; then
+            echo "job=${{ github.event.inputs.job }}" >> "$GITHUB_OUTPUT"
+          else
+            case "${{ github.event.schedule }}" in
+              "0 */6 * * *") echo "job=full_pipeline" >> "$GITHUB_OUTPUT" ;;
+              "0 3 * * *") echo "job=affinity" >> "$GITHUB_OUTPUT" ;;
+              "15 3 * * *") echo "job=profile_vectors" >> "$GITHUB_OUTPUT" ;;
+              "30 */3 * * *") echo "job=ranking" >> "$GITHUB_OUTPUT" ;;
+              "0 4 1 * *") echo "job=source_revalidation" >> "$GITHUB_OUTPUT" ;;
+              "0 6 * * 1") echo "job=trend_report" >> "$GITHUB_OUTPUT" ;;
+              *) echo "job=full_pipeline" >> "$GITHUB_OUTPUT" ;;
+            esac
+          fi
+
+      - name: Run full pipeline
+        if: steps.which.outputs.job == 'full_pipeline'
+        run: uv run python run_pipeline.py
+
+      - name: Run scheduled job
+        if: steps.which.outputs.job != 'full_pipeline'
+        run: uv run python -m app.scripts.run_scheduled_job --job ${{ steps.which.outputs.job }}

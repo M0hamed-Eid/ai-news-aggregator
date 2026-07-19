@@ -18,13 +18,17 @@
 # Windows — the default prefork pool is a Linux-oriented multiprocessing
 # model that doesn't behave reliably here.
 
+import logging
 import os
 
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import worker_process_init
 from dotenv import load_dotenv
 
 load_dotenv()  # read .env before resolving REDIS_URL
+
+logger = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 
@@ -117,3 +121,28 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=0, hour=6, day_of_week=1),
     },
 }
+
+
+@worker_process_init.connect
+def _preload_embedding_model(**kwargs):
+    """
+    Load the sentence-transformers model once at worker startup rather than
+    lazily on the first task. Without this, the FIRST call to embed_text()/
+    embed_texts() on a freshly-started worker downloads+loads the model from
+    Hugging Face Hub before doing any real work — measured at ~90s on a cold
+    cache in this project's own Docker deployment verification, which blows
+    straight through the interactive queue's 5s/20s client-side timeouts
+    (web/apps/news/search.py, web/apps/onboarding/source_submission.py) even
+    though the task itself succeeds moments later. This only matters for the
+    interactive worker in practice (the one serving live, timeout-bound
+    requests) but runs for every worker unconditionally — a few extra
+    seconds at startup is trivial, and every worker calls embed_text/
+    embed_texts somewhere in its own task set anyway.
+    """
+    try:
+        from app.embeddings.embedding_service import embed_text
+
+        embed_text("warmup")
+        logger.info("Embedding model pre-loaded at worker startup.")
+    except Exception:
+        logger.exception("Embedding model pre-load failed — first real task will load it instead.")
