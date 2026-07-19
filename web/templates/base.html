@@ -11,7 +11,7 @@
   {% block extra_css %}{% endblock %}
 </head>
 <body>
-  <nav class="navbar navbar-expand-lg navbar-dark app-navbar sticky-top">
+  <nav class="navbar navbar-expand-xl navbar-dark app-navbar sticky-top">
     <div class="container">
       <a class="navbar-brand fw-bold d-flex align-items-center gap-2" href="{% url 'home' %}">
         <i class="bi bi-compass-fill"></i> AI&nbsp;Compass
@@ -21,7 +21,7 @@
         <span class="navbar-toggler-icon"></span>
       </button>
       <div class="collapse navbar-collapse" id="nav">
-        <ul class="navbar-nav me-auto align-items-lg-center">
+        <ul class="navbar-nav me-auto align-items-xl-center gap-xl-2">
           <li class="nav-item">
             <a class="nav-link {% if request.resolver_match.url_name == 'home' %}active{% endif %}" href="{% url 'home' %}">
               <i class="bi bi-newspaper"></i> Home
@@ -65,12 +65,12 @@
             </li>
           {% endif %}
         </ul>
-        <ul class="navbar-nav ms-auto align-items-lg-center">
+        <ul class="navbar-nav ms-auto align-items-xl-center">
           {% if user.is_authenticated %}
             <li class="nav-item dropdown">
               <a class="nav-link dropdown-toggle d-flex align-items-center gap-2" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                 <span class="app-avatar">{{ user.email|slice:":1"|upper }}</span>
-                <span class="d-none d-lg-inline">{{ user.first_name|default:user.email }}</span>
+                <span class="d-none d-xl-inline">{{ user.first_name|default:user.email }}</span>
               </a>
               <ul class="dropdown-menu dropdown-menu-end">
                 <li><a class="dropdown-item" href="{% url 'accounts:profile' %}"><i class="bi bi-person-circle me-2"></i>Profile</a></li>
@@ -93,7 +93,7 @@
             </li>
           {% else %}
             <li class="nav-item"><a class="nav-link" href="{% url 'accounts:login' %}">Log in</a></li>
-            <li class="nav-item"><a class="btn btn-primary btn-sm ms-lg-2" href="{% url 'accounts:register' %}">Sign up</a></li>
+            <li class="nav-item"><a class="btn btn-primary btn-sm ms-xl-2" href="{% url 'accounts:register' %}">Sign up</a></li>
           {% endif %}
         </ul>
       </div>

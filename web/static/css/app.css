@@ -49,6 +49,22 @@ main {
   opacity: 0.88;
 }
 
+/* Breathing room between nav-link icon+label pairs — Bootstrap's own
+   navbar-nav-link-padding-x default (0.5rem) reads as cramped once the
+   navbar is this wide and this content-dense (8 links + account menu). */
+@media (min-width: 1200px) {
+  .app-navbar .navbar-nav .nav-link {
+    padding-left: 0.85rem;
+    padding-right: 0.85rem;
+  }
+}
+
+.app-logo-mark {
+  height: 1.5rem;
+  width: 1.5rem;
+  object-fit: contain;
+}
+
 .app-navbar .nav-link.active,
 .app-navbar .nav-link:hover {
   opacity: 1;
@@ -430,23 +446,50 @@ a {
 
 /* ---------------------------------------------------------------------- */
 /* Wide-viewport container                                                */
-/* Bootstrap's stock .container caps at 1320px from 1400px up, which reads */
-/* as excessive empty side margin on real desktop/wide-monitor viewports   */
-/* (1920x1080, 2560x1440). These two extra tiers widen it further while    */
-/* leaving every default Bootstrap breakpoint below 1600px untouched.      */
-/* Applied to .container globally (not just <main>) so the navbar/footer   */
-/* stay visually aligned with page content at these widths.                */
+/* Bootstrap's stock .container tiers (960/1140/1320px from 992px up) read */
+/* as excessive empty side margin on real laptop/desktop/wide-monitor      */
+/* viewports. Re-tiered from 992px up with NO gaps between stops, so every */
+/* width from a smaller laptop (e.g. a 1366-1440px logical viewport, very  */
+/* common under Windows display scaling) through an ultrawide monitor gets */
+/* a real, continuous density improvement — not just the top Bootstrap     */
+/* breakpoint. Applied to .container globally (not just <main>) so the     */
+/* navbar/footer stay visually aligned with page content at every width.   */
+/* Verified live at 1366/1440/1536/1920/2560px + mobile (untouched).       */
 /* ---------------------------------------------------------------------- */
 
-@media (min-width: 1600px) {
+@media (min-width: 992px) {
   .container {
-    max-width: 1520px;
+    max-width: 1180px; /* was Bootstrap stock 960px */
   }
 }
 
-@media (min-width: 2200px) {
+@media (min-width: 1200px) {
   .container {
-    max-width: 1800px;
+    max-width: 1360px; /* was Bootstrap stock 1140px */
+  }
+}
+
+@media (min-width: 1400px) {
+  .container {
+    max-width: 1560px; /* was Bootstrap stock 1320px */
+  }
+}
+
+@media (min-width: 1700px) {
+  .container {
+    max-width: 1820px;
+  }
+}
+
+@media (min-width: 2000px) {
+  .container {
+    max-width: 2000px;
+  }
+}
+
+@media (min-width: 2400px) {
+  .container {
+    max-width: 2200px;
   }
 }
 

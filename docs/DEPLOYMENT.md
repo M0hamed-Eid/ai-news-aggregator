@@ -204,20 +204,32 @@ previous version" per-service — no manual git steps needed.
 
 ## 7. Production URLs
 
-Fill in once actually deployed (this cannot be done before a real domain/
-Render URL exists):
+Domain: **`aicompass.duckdns.org`** (free DDNS, already registered — currently
+points at whatever IP was set when it was created; **must be updated to the
+Oracle VM's real public IP once it's provisioned**, via
+https://www.duckdns.org/domains before the first deploy, or Caddy's Let's
+Encrypt challenge will fail).
 
 | Endpoint | Path | Notes |
 |---|---|---|
-| Home | `/` | Public |
-| Feed | `/feed/` | Authenticated |
-| Search | `/search/` | Public, degrades to keyword search if the interactive worker is briefly down |
-| Admin | `/admin/` | Staff only |
-| Ops dashboard | `/ops/` | Staff only |
-| Health check | `/healthz/` | `{"status": "ok"}` / 503 |
-| Digest click redirect | `/r/<token>/` | Used only inside sent digest emails |
-| Stripe webhook | `/accounts/stripe/webhook/` | Configure this exact URL in the Stripe dashboard |
+| Home | `https://aicompass.duckdns.org/` | Public |
+| Feed | `https://aicompass.duckdns.org/feed/` | Authenticated |
+| Search | `https://aicompass.duckdns.org/search/` | Public, degrades to keyword search if the interactive worker is briefly down |
+| Admin | `https://aicompass.duckdns.org/admin/` | Staff only |
+| Ops dashboard | `https://aicompass.duckdns.org/ops/` | Staff only |
+| Health check | `https://aicompass.duckdns.org/healthz/` | `{"status": "ok"}` / 503 |
+| Digest click redirect | `https://aicompass.duckdns.org/r/<token>/` | Used only inside sent digest emails |
+| Stripe webhook | `https://aicompass.duckdns.org/accounts/stripe/webhook/` | Configure this exact URL in the Stripe dashboard |
 | API | N/A | Public REST API is out of scope (deferred per `docs/ROADMAP.md`, same as M13) |
+
+Postgres: Neon project created (`neondb`, AWS us-east-1) — connection string
+lives in `.env.prod`/`web/.env.prod` (gitignored, not in this doc). **Not yet
+migrated**: this dev machine's network blocks outbound port 5432 to Neon
+(confirmed from both Docker and a direct Python connection — timeouts/
+refused on all 3 of Neon's backend IPs, while normal HTTPS traffic works
+fine). Nothing was written to Neon; the database is still empty. Run
+`scripts/export_db.ps1` → `restore_db.ps1` → `verify_migration.ps1` (see
+Section 4) from a network that allows outbound 5432 once available.
 
 ---
 
