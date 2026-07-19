@@ -28,6 +28,11 @@ FEATURE_PLANS: dict[str, set[str]] = {
     # chunking/chaptering is computed for every qualifying video regardless
     # of any viewer's plan (Architecture Principle 1).
     "deep_video_summaries": {User.Plan.PRO},
+    # M13 — found via audit: docs/ROADMAP.md's Free/Pro table has always
+    # promised "People follows: few (Free) / Unlimited (Pro)", but no cap
+    # was ever implemented when follow/unfollow shipped in M9 (see
+    # web/apps/behavior/views.py::FollowToggleView, FREE_FOLLOW_LIMIT).
+    "unlimited_follows": {User.Plan.PRO},
 }
 
 

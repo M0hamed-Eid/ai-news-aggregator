@@ -461,6 +461,17 @@ uv sync                            # or: pip install -e .
 cd web && python -m venv .venv && .venv/Scripts/pip install -r requirements.txt && cd ..
 ```
 
+**⚠️ If your shell also runs `manage.py` from the root `.venv`** (e.g. an
+activated `(ai-news-aggregator)` prompt, even while `cd`'d into `web/`) —
+this machine has TWO Python environments capable of running Django, and a
+package installed into only one of them will crash the OTHER one with
+`ModuleNotFoundError` the moment you try to use it from there. Check which
+one your shell actually uses (`python -c "import django; print(django.__file__)"`)
+and mirror every `web/requirements.txt` install into it too — the root venv
+is `uv`-managed (no standalone `pip.exe`), so use `uv pip install <pkg>`
+there instead of a bare `pip install`. See `.wolf/cerebrum.md` and buglog
+`web-020` for the exact incident this note exists to prevent.
+
 **Step 1 — Docker services (PostgreSQL + Redis + pgAdmin)**
 
 ```bash
@@ -559,12 +570,18 @@ content.
 Everything lives in the `public` schema of one database — no separate
 schema per app.
 
-**Table ownership map** (verified against the actual model files, M12):
+**Table ownership map** (verified against the actual model files, M13):
 
 | Owner | Tables | Migrated by |
 |---|---|---|
 | Pipeline (SQLAlchemy) | `articles`, `youtube_videos`, `embeddings`, `sources`, `user_rankings`, `digest_log`, `user_affinities`, `digest_click_tokens`, `taxonomy_topics`, `content_topics`, `entities`, `content_entities`, `content_clusters`, `content_cluster_members`, `content_enrichment`, `content_scores`, `user_profile_vectors`, `person_entities`, `trends`, `trend_reports`, `content_chunks`, `stt_jobs` | Alembic |
-| Django | `users`, `user_profiles`, `personas`, `interests`, `user_interests`, `user_digest_settings`, `user_exclusions`, `user_events`, `saved_items`, `user_follows`, `user_source_subscriptions` | Django migrations |
+| Django | `users` (+ M13's `email_verified` column), `user_profiles`, `personas`, `interests`, `user_interests`, `user_digest_settings`, `user_exclusions`, `user_events`, `saved_items`, `user_follows`, `user_source_subscriptions`, `stripe_customers` (M13) | Django migrations |
+
+M13 is the first milestone with **zero pipeline/Alembic schema change** — Stripe
+customer/subscription mapping (`stripe_customers`) and `email_verified` are
+both Django-owned per its own spec, and the ops dashboard reuses the
+already-existing `apps.catalog.models.Source` mirror rather than adding
+anything new pipeline-side.
 
 **Read-only mirrors** (same physical table, read from the *other* ORM,
 never migrated or written by it):
@@ -973,6 +990,13 @@ the dev server. See buglog `web-014`.
 - [ ] `pytest` — **14 passed, 22 pre-existing errors** (the SQLite/JSONB
       baseline — see the Do-Not-Repeat section of `.wolf/cerebrum.md`; any
       other failure count is a real regression, not this baseline)
+- [ ] (M13) Register a test account → console-backend email shows a real
+      verification link → clicking it flips `email_verified` → the SAME
+      link clicking again is rejected ("invalid or already used")
+- [ ] (M13) `/ops/` returns 403 for a non-staff user, 200 for `is_staff=True`
+- [ ] (M13) `/pricing/` and `/accounts/billing/` render correctly for both
+      a Free and a Pro user; the "Upgrade to Pro" button is disabled
+      whenever `STRIPE_SECRET_KEY`/`STRIPE_PRICE_ID_PRO` are unset
 
 ---
 
@@ -1002,6 +1026,26 @@ the dev server. See buglog `web-014`.
 ### pgAdmin can't connect to "localhost"
 - Inside Docker, the Postgres container is named `db`, not `localhost`.
 - Use `db` as the hostname in pgAdmin's "Add Server" dialog.
+
+### Testing the Stripe webhook without a real Stripe account (M13)
+- `STRIPE_WEBHOOK_SECRET` just needs to match on both sides — it doesn't have
+  to come from a real Stripe dashboard/CLI. Set any string in `web/.env`
+  (e.g. `whsec_local_dev_test_only...`), then hand-construct a signed test
+  event in a Django shell:
+  ```python
+  import stripe, json, time
+  payload = json.dumps({"id": "evt_test", "object": "event", "type": "checkout.session.completed",
+                         "data": {"object": {"client_reference_id": "1", "customer": "cus_x", "subscription": "sub_x"}}})
+  ts = int(time.time())
+  sig = stripe.WebhookSignature._compute_signature(f"{ts}.{payload}", "whsec_local_dev_test_only...")
+  # POST payload to /accounts/stripe/webhook/ with header Stripe-Signature: f"t={ts},v1={sig}"
+  ```
+  This exercises the real signature-verification + event-handling code path
+  with zero network calls to Stripe — only `stripe.checkout.Session.create()`
+  (an actual outbound API call) needs real `STRIPE_SECRET_KEY`/`STRIPE_PRICE_ID_PRO`.
+- `stripe.Webhook.construct_event()` returns a `StripeObject`, not a plain
+  dict — call `.to_dict()` before handing it to `.get()`-based handler code
+  (see buglog `web-015`).
 
 ---
 

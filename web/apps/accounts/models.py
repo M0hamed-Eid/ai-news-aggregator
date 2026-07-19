@@ -22,6 +22,10 @@ class User(AbstractUser):
     email = models.EmailField(_("email address"), unique=True)
     plan = models.CharField(max_length=20, choices=Plan.choices, default=Plan.FREE)
     plan_expires_at = models.DateTimeField(null=True, blank=True)
+    # M13 — soft-gated: never blocks basic app access (same convention as
+    # UserProfile.onboarding_completed), but hard-required before Stripe
+    # checkout (see apps.accounts.views.CreateCheckoutSessionView).
+    email_verified = models.BooleanField(default=False)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []  # createsuperuser prompts for email + password
@@ -66,3 +70,33 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"Profile({self.user.email})"
+
+
+class StripeCustomer(models.Model):
+    """
+    M13 — Stripe customer/subscription mapping (Django-owned per
+    docs/ROADMAP.md's M13 spec). This is bookkeeping ONLY — every
+    entitlement check in the app (user_can(), FEATURE_PLANS, M11's
+    DjangoUser pipeline mirror) keeps reading the SAME User.plan/
+    plan_expires_at fields it always has. The Stripe webhook
+    (apps.accounts.billing.StripeWebhookView) is the only writer of this
+    table AND the only thing that flips User.plan/plan_expires_at — nothing
+    else in the app ever sets Pro directly.
+    """
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="stripe_customer")
+    stripe_customer_id = models.CharField(max_length=255, unique=True)
+    stripe_subscription_id = models.CharField(max_length=255, null=True, blank=True)
+    # Stripe's own status strings verbatim: active, trialing, past_due,
+    # canceled, unpaid, incomplete, incomplete_expired — never re-enumerated
+    # here, since Stripe is the source of truth for what these mean.
+    subscription_status = models.CharField(max_length=50, null=True, blank=True)
+    current_period_end = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "stripe_customers"
+
+    def __str__(self):
+        return f"StripeCustomer({self.user.email})"

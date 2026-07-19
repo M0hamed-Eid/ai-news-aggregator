@@ -9,6 +9,7 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import TemplateView
 
+from apps.accounts.entitlements import user_can
 from apps.catalog.models import Article, DigestClickToken, YoutubeVideo
 
 from .models import CONTENT_TYPE_CHOICES, SavedItem, UserEvent, UserFollow
@@ -19,6 +20,10 @@ VALID_EVENT_TYPES = {code for code, _ in UserEvent.EVENT_TYPE_CHOICES}
 VALID_FOLLOW_TARGET_TYPES = {code for code, _ in UserFollow.TARGET_TYPE_CHOICES}
 MAX_EVENTS_PER_BATCH = 50
 RATE_LIMIT_PER_MINUTE = 60
+# M13 — found via audit: promised in docs/ROADMAP.md's Free/Pro table since
+# before M9 shipped follow/unfollow, never actually enforced until now.
+# Mirrors FREE_CUSTOM_SOURCE_LIMIT's exact pattern (apps.onboarding.source_submission).
+FREE_FOLLOW_LIMIT = 20
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -157,6 +162,13 @@ class FollowToggleView(LoginRequiredMixin, View):
         ).delete()
         if deleted:
             return JsonResponse({"following": False})
+
+        if not user_can(request.user, "unlimited_follows"):
+            current_count = UserFollow.objects.filter(user=request.user).count()
+            if current_count >= FREE_FOLLOW_LIMIT:
+                return JsonResponse({
+                    "error": f"Free accounts can follow up to {FREE_FOLLOW_LIMIT} — upgrade to Pro for unlimited.",
+                }, status=403)
 
         UserFollow.objects.create(user=request.user, target_type=target_type, target_key=target_key)
         return JsonResponse({"following": True})

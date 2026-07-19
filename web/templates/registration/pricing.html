@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Pricing · AI Compass{% endblock %}
+{% block content %}
+
+<div class="text-center mb-4">
+  <h1 class="h3 app-section-title mb-1"><i class="bi bi-stars text-primary"></i> Pricing</h1>
+  <p class="text-muted mb-0">Free forever for the core product. Upgrade for the compute-heavy stuff.</p>
+</div>
+
+{% if not billing_configured %}
+  <div class="alert alert-secondary text-center">Billing isn't configured yet on this deployment — upgrades aren't available right now.</div>
+{% endif %}
+
+<div class="row justify-content-center g-4 mb-4">
+  <div class="col-md-5">
+    <div class="app-card p-4 h-100">
+      <h2 class="h5 mb-1">Free</h2>
+      <p class="text-muted small mb-3">Everything you need to stay current on AI.</p>
+      <ul class="list-unstyled mb-4">
+        <li class="mb-2"><i class="bi bi-check-lg text-success me-1"></i> Unlimited interests &amp; topics</li>
+        <li class="mb-2"><i class="bi bi-check-lg text-success me-1"></i> Daily personalized digest</li>
+        <li class="mb-2"><i class="bi bi-check-lg text-success me-1"></i> Semantic search</li>
+        <li class="mb-2"><i class="bi bi-check-lg text-success me-1"></i> Up to 3 custom sources</li>
+        <li class="mb-2"><i class="bi bi-check-lg text-success me-1"></i> Follow up to {{ free_follow_limit|default:20 }} people/topics/entities</li>
+        <li class="mb-2 text-muted"><i class="bi bi-dash-lg me-1"></i> Deep video summaries — short videos only</li>
+        <li class="mb-2 text-muted"><i class="bi bi-dash-lg me-1"></i> No weekly trend insights report</li>
+      </ul>
+      {% if user.is_authenticated and user.plan == 'free' %}
+        <button class="btn btn-outline-secondary w-100" disabled>Your current plan</button>
+      {% elif not user.is_authenticated %}
+        <a href="{% url 'accounts:register' %}" class="btn btn-outline-primary w-100">Sign up free</a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-md-5">
+    <div class="app-card p-4 h-100 border border-warning">
+      <h2 class="h5 mb-1">Pro <span class="badge text-bg-warning">Recommended</span></h2>
+      <p class="text-muted small mb-3">Everything in Free, plus the compute-heavy features.</p>
+      <ul class="list-unstyled mb-4">
+        <li class="mb-2"><i class="bi bi-check-lg text-success me-1"></i> Unlimited custom sources</li>
+        <li class="mb-2"><i class="bi bi-check-lg text-success me-1"></i> Unlimited follows</li>
+        <li class="mb-2"><i class="bi bi-check-lg text-success me-1"></i> Chaptered deep summaries for long-form video</li>
+        <li class="mb-2"><i class="bi bi-check-lg text-success me-1"></i> Speech-to-text for caption-less videos</li>
+        <li class="mb-2"><i class="bi bi-check-lg text-success me-1"></i> Weekly grounded trend insights report</li>
+      </ul>
+      {% if user.is_authenticated and user.plan == 'pro' %}
+        <a href="{% url 'accounts:billing' %}" class="btn btn-outline-secondary w-100">Manage your subscription</a>
+      {% elif user.is_authenticated %}
+        <form action="{% url 'accounts:create_checkout_session' %}" method="post" class="m-0">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-warning w-100"
+                  {% if not billing_configured %}disabled title="Billing isn't configured on this deployment yet — see the notice above."{% endif %}>
+            Upgrade to Pro
+          </button>
+        </form>
+      {% else %}
+        <a href="{% url 'accounts:login' %}?next={% url 'pricing' %}" class="btn btn-warning w-100">Log in to upgrade</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}

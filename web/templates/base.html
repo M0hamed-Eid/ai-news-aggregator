@@ -32,6 +32,11 @@
               <i class="bi bi-search"></i> Search
             </a>
           </li>
+          <li class="nav-item">
+            <a class="nav-link {% if request.resolver_match.url_name == 'pricing' %}active{% endif %}" href="{% url 'pricing' %}">
+              <i class="bi bi-stars"></i> Pricing
+            </a>
+          </li>
           {% if user.is_authenticated %}
             <li class="nav-item">
               <a class="nav-link {% if request.resolver_match.url_name == 'feed' %}active{% endif %}" href="{% url 'feed' %}">
@@ -69,9 +74,13 @@
               </a>
               <ul class="dropdown-menu dropdown-menu-end">
                 <li><a class="dropdown-item" href="{% url 'accounts:profile' %}"><i class="bi bi-person-circle me-2"></i>Profile</a></li>
+                <li><a class="dropdown-item" href="{% url 'accounts:billing' %}"><i class="bi bi-credit-card me-2"></i>Billing</a></li>
                 <li><a class="dropdown-item" href="{% url 'onboarding:preferences' %}"><i class="bi bi-sliders me-2"></i>Preferences</a></li>
                 {% if not user.profile.onboarding_completed %}
                   <li><a class="dropdown-item" href="{% url 'onboarding:start' %}"><i class="bi bi-compass me-2"></i>Onboarding</a></li>
+                {% endif %}
+                {% if user.is_staff %}
+                  <li><a class="dropdown-item" href="{% url 'ops_dashboard' %}"><i class="bi bi-heart-pulse me-2"></i>Ops Dashboard</a></li>
                 {% endif %}
                 <li><hr class="dropdown-divider"></li>
                 <li>
@@ -92,6 +101,15 @@
   </nav>
 
   <main class="container py-4 flex-grow-1">
+    {% if user.is_authenticated and not user.email_verified %}
+      <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2" role="alert">
+        <span><i class="bi bi-envelope-exclamation me-1"></i> Please verify your email address.</span>
+        <form action="{% url 'accounts:resend_verification' %}" method="post" class="m-0">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-outline-dark btn-sm">Resend verification email</button>
+        </form>
+      </div>
+    {% endif %}
     {% if messages %}
       {% for message in messages %}
         <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">

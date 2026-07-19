@@ -1,5 +1,10 @@
 from django import forms
-from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
+from django.contrib.auth.forms import (
+    AuthenticationForm,
+    PasswordResetForm,
+    SetPasswordForm,
+    UserCreationForm,
+)
 
 from .models import User
 
@@ -37,3 +42,16 @@ class BootstrapAuthenticationForm(AuthenticationForm):
         )
         self.fields["username"].label = "Email"
         self.fields["password"].widget.attrs.update(BOOTSTRAP_INPUT)
+
+
+class BootstrapPasswordResetForm(PasswordResetForm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["email"].widget.attrs.update({**BOOTSTRAP_INPUT, "autofocus": True})
+
+
+class BootstrapSetPasswordForm(SetPasswordForm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["new_password1"].widget.attrs.update({**BOOTSTRAP_INPUT, "autofocus": True})
+        self.fields["new_password2"].widget.attrs.update(BOOTSTRAP_INPUT)

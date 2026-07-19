@@ -131,3 +131,38 @@ MESSAGE_TAGS = {message_constants.ERROR: "danger"}
 LOGIN_URL = "accounts:login"
 LOGIN_REDIRECT_URL = "home"
 LOGOUT_REDIRECT_URL = "home"
+
+# M13 — verification/password-reset emails, via Django's OWN mail
+# infrastructure (separate from the pipeline's Gmail-based EmailSender,
+# app/services/email_sender.py, which sends digest emails from an entirely
+# different process). Reuses the SAME GMAIL_ADDRESS/GMAIL_APP_PASSWORD
+# credentials EmailSender already uses, if present in web/.env, so real
+# mail actually lands in an inbox instead of only printing to the dev
+# server's console. Falls back to the console backend when no credentials
+# are configured — same graceful-degradation discipline as EmailSender's
+# own is_configured check, never crashes on a missing credential.
+GMAIL_ADDRESS = env("GMAIL_ADDRESS", default="")
+GMAIL_APP_PASSWORD = env("GMAIL_APP_PASSWORD", default="")
+if GMAIL_ADDRESS and GMAIL_APP_PASSWORD:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = "smtp.gmail.com"
+    EMAIL_PORT = 465
+    EMAIL_USE_SSL = True
+    EMAIL_HOST_USER = GMAIL_ADDRESS
+    EMAIL_HOST_PASSWORD = GMAIL_APP_PASSWORD
+    # Must be the authenticated Gmail address (or a same-domain alias) —
+    # Gmail's own SPF/DKIM will flag or rewrite a From header claiming an
+    # unrelated domain (e.g. "noreply@aicompass.local") sent through its SMTP.
+    DEFAULT_FROM_EMAIL = f"AI Compass <{GMAIL_ADDRESS}>"
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+    DEFAULT_FROM_EMAIL = "AI Compass <noreply@aicompass.local>"
+
+# M13 — Stripe (test mode). All blank-by-default: apps.accounts.billing
+# checks these before doing anything and degrades to an honest "billing
+# isn't configured" state rather than crashing (same discipline as
+# EnrichmentAgent's Groq/Ollama fallback).
+STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
+STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default="")
+STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
+STRIPE_PRICE_ID_PRO = env("STRIPE_PRICE_ID_PRO", default="")

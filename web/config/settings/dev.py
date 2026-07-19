@@ -4,5 +4,7 @@ from .base import *  # noqa: F401,F403
 DEBUG = True
 ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 
-# Print emails (password reset, etc.) to the console during development.
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+# EMAIL_BACKEND is set in base.py — real Gmail SMTP if GMAIL_ADDRESS/
+# GMAIL_APP_PASSWORD are configured in web/.env, console (prints instead of
+# sending) otherwise. Not overridden here so a real dev environment with
+# real credentials actually delivers mail.

@@ -1,14 +1,22 @@
 from django.contrib import messages
-from django.contrib.auth import login
+from django.contrib.auth import login, views as auth_views
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.shortcuts import redirect
 from django.urls import reverse_lazy
+from django.utils.encoding import force_str
+from django.utils.http import urlsafe_base64_decode
+from django.views import View
 from django.views.generic import CreateView, TemplateView
 
-from apps.catalog.models import DigestLog
+from apps.behavior.ratelimit import check_rate_limit
+from apps.catalog.models import DigestLog, Source
 from apps.onboarding.models import Persona
+from apps.onboarding.source_submission import FREE_CUSTOM_SOURCE_LIMIT
 
-from .forms import RegisterForm
+from .email_verification import email_verification_token, send_verification_email
+from .entitlements import user_can
+from .forms import BootstrapAuthenticationForm, RegisterForm
+from .models import StripeCustomer, User
 
 
 class RegisterView(CreateView):
@@ -32,7 +40,133 @@ class RegisterView(CreateView):
     def form_valid(self, form):
         response = super().form_valid(form)
         login(self.request, self.object)
+        if send_verification_email(self.object, self.request):
+            messages.info(self.request, "We've sent a verification link to your email.")
+        else:
+            messages.warning(
+                self.request,
+                "We couldn't send a verification email right now — use \"Resend verification email\" "
+                "above once you're ready to verify.",
+            )
         return response
+
+
+class RateLimitedLoginView(auth_views.LoginView):
+    """
+    M13 — auth hardening. Wraps Django's built-in LoginView with the SAME
+    Redis-backed limiter apps.behavior.ratelimit already uses for the M7
+    event-ingestion endpoint, reused here rather than adding a new
+    rate-limiting package. Keyed on BOTH the client IP (blocks distributed
+    brute force) and the submitted email (blocks a targeted attack against
+    one account from many IPs) — every POST consumes from both budgets
+    regardless of whether the credentials turn out to be valid.
+    """
+
+    template_name = "registration/login.html"
+    authentication_form = BootstrapAuthenticationForm
+    redirect_authenticated_user = True
+
+    LOGIN_ATTEMPT_LIMIT = 5
+    LOGIN_ATTEMPT_WINDOW_SECONDS = 300
+
+    def post(self, request, *args, **kwargs):
+        ip = request.META.get("REMOTE_ADDR") or "unknown"
+        email = (request.POST.get("username") or "").strip().lower()
+
+        ip_ok = check_rate_limit(f"login_attempt:ip:{ip}", self.LOGIN_ATTEMPT_LIMIT, self.LOGIN_ATTEMPT_WINDOW_SECONDS)
+        email_ok = (
+            check_rate_limit(f"login_attempt:email:{email}", self.LOGIN_ATTEMPT_LIMIT, self.LOGIN_ATTEMPT_WINDOW_SECONDS)
+            if email else True
+        )
+
+        if not (ip_ok and email_ok):
+            form = self.get_form()
+            form.add_error(None, "Too many login attempts. Please wait a few minutes and try again.")
+            return self.form_invalid(form)
+
+        return super().post(request, *args, **kwargs)
+
+
+class VerifyEmailView(View):
+    """GET /accounts/verify/<uidb64>/<token>/ — the link sent by send_verification_email()."""
+
+    def get(self, request, uidb64, token, *args, **kwargs):
+        try:
+            uid = force_str(urlsafe_base64_decode(uidb64))
+            user = User.objects.get(pk=uid)
+        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+            user = None
+
+        if user is not None and email_verification_token.check_token(user, token):
+            user.email_verified = True
+            user.save(update_fields=["email_verified"])
+            messages.success(request, "Your email is verified.")
+        else:
+            messages.error(request, "That verification link is invalid or has already been used.")
+
+        return redirect("home" if request.user.is_authenticated else "accounts:login")
+
+
+class ResendVerificationView(LoginRequiredMixin, View):
+    """POST-only — resend the verification email to the logged-in user's own address."""
+
+    def post(self, request, *args, **kwargs):
+        if request.user.email_verified:
+            messages.info(request, "Your email is already verified.")
+        elif send_verification_email(request.user, request):
+            messages.success(request, "Verification email sent.")
+        else:
+            messages.error(request, "Couldn't send the verification email — please try again shortly.")
+        return redirect(request.META.get("HTTP_REFERER") or "accounts:profile")
+
+
+class BillingView(LoginRequiredMixin, TemplateView):
+    """
+    M13 — subscription status + usage stats in one page (not fragmented
+    into two), matching how ProfileView already combines several related
+    concerns into one page rather than many thin ones. Stripe state is
+    READ here only — every write happens in apps.accounts.billing's webhook.
+    """
+
+    template_name = "registration/billing.html"
+
+    def get_context_data(self, **kwargs):
+        from apps.behavior.models import UserFollow
+        from apps.behavior.views import FREE_FOLLOW_LIMIT
+
+        ctx = super().get_context_data(**kwargs)
+        user = self.request.user
+        ctx["stripe_customer"] = StripeCustomer.objects.filter(user=user).first()
+
+        # Usage stats — real counts against the SAME limits FollowToggleView/
+        # submit_source actually enforce, not duplicated magic numbers.
+        ctx["sources_used"] = Source.objects.filter(created_by=user.id).count()
+        ctx["sources_limit"] = None if user_can(user, "unlimited_custom_sources") else FREE_CUSTOM_SOURCE_LIMIT
+        ctx["follows_used"] = UserFollow.objects.filter(user=user).count()
+        ctx["follows_limit"] = None if user_can(user, "unlimited_follows") else FREE_FOLLOW_LIMIT
+        ctx["digests_received_count"] = DigestLog.objects.filter(user_id=user.id).count()
+        return ctx
+
+
+class PricingView(TemplateView):
+    """
+    Public — works for anonymous visitors (wired at the project root, same
+    convention as HomeView/TrendReportView, not namespaced under accounts:).
+    Mirrors docs/ROADMAP.md §5's Free/Pro table content directly rather than
+    inventing new copy.
+    """
+
+    template_name = "registration/pricing.html"
+
+    def get_context_data(self, **kwargs):
+        from apps.behavior.views import FREE_FOLLOW_LIMIT
+
+        from .billing import stripe_configured
+
+        ctx = super().get_context_data(**kwargs)
+        ctx["billing_configured"] = stripe_configured()
+        ctx["free_follow_limit"] = FREE_FOLLOW_LIMIT
+        return ctx
 
 
 class ProfileView(LoginRequiredMixin, TemplateView):
