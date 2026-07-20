@@ -135,3 +135,7 @@
 {% endif %}
 
 {% endblock %}
+
+{% block page_context %}
+<script type="application/json" id="ac-page-context">{"content_type": "youtube_video", "content_id": {{ video.pk }}}</script>
+{% endblock %}

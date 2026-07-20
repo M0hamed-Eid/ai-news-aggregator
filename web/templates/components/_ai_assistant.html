@@ -1,0 +1,48 @@
+{# AI Assistant floating chat widget (M14). Mounted once in base.html, gated
+   on user.is_authenticated there — deliberately takes NO template context of
+   its own so it's identical on every page; assistant.js reads page context
+   (if any) from a per-template #ac-page-context block instead (see
+   article_detail.html/video_detail.html). #}
+<div id="ac-assistant-root" class="ac-assistant">
+  <button id="ac-assistant-fab" class="ac-assistant-fab" type="button"
+          aria-label="Open AI assistant" aria-expanded="false" aria-controls="ac-assistant-panel">
+    <i class="bi bi-stars"></i>
+  </button>
+
+  <div id="ac-assistant-panel" class="ac-assistant-panel" hidden>
+    <div class="ac-assistant-header">
+      <span class="ac-assistant-header-title"><i class="bi bi-stars"></i> AI Assistant</span>
+      <button type="button" id="ac-assistant-close" class="ac-assistant-close" aria-label="Close assistant">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+
+    <div id="ac-assistant-scope" class="ac-assistant-scope" role="radiogroup" aria-label="Search scope" hidden>
+      <label class="app-chip ac-scope-chip">
+        <input type="radio" name="ac-scope" value="document" checked>
+        <span class="chip-check"><i class="bi bi-check-lg"></i></span><span id="ac-scope-document-label">This page</span>
+      </label>
+      <label class="app-chip ac-scope-chip">
+        <input type="radio" name="ac-scope" value="kb">
+        <span class="chip-check"><i class="bi bi-check-lg"></i></span>Everything
+      </label>
+    </div>
+
+    <div id="ac-assistant-messages" class="ac-assistant-messages">
+      <div class="ac-assistant-empty" id="ac-assistant-empty">
+        <i class="bi bi-stars"></i>
+        <p>Ask me anything about the news — I'll answer using what's actually in AI Compass, with citations.</p>
+      </div>
+    </div>
+
+    <div id="ac-assistant-suggestions" class="ac-assistant-suggestions"></div>
+
+    <form id="ac-assistant-form" class="ac-assistant-form">
+      <input type="text" id="ac-assistant-input" class="form-control" placeholder="Ask a question…"
+             autocomplete="off" maxlength="1000" aria-label="Your question">
+      <button type="submit" class="ac-assistant-send" aria-label="Send">
+        <i class="bi bi-send-fill"></i>
+      </button>
+    </form>
+  </div>
+</div>

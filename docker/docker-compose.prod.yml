@@ -78,6 +78,39 @@ services:
       - backend
 
   # ---------------------------------------------------------------------------
+  # M14 Phase D — isolated ASGI service for STREAMING chat responses only.
+  # SAME image/codebase as `web` (web/Dockerfile) — just uvicorn against
+  # config.asgi:application instead of gunicorn's WSGI entrypoint, and a
+  # different port, so a long-lived SSE stream (apps.assistant's
+  # AssistantStreamView) never pins one of `web`'s 2 sync gunicorn workers
+  # (with only 2, one stuck stream would cap the ENTIRE site at 1 other
+  # concurrent visitor). Caddy routes /assistant/stream/* here specifically
+  # (see Caddyfile); every other request still goes to `web` unchanged. No
+  # new Python/Django code required — config.asgi.application already
+  # existed (declared, unused) since this project's Django 5.2 scaffold.
+  # Skips migrate/collectstatic (unlike `web`'s CMD) — `web` already owns
+  # startup migrations, and no static-file request ever reaches this
+  # service, so running collectstatic here would be pure redundant work.
+  # NOT exercised in local dev (no docker-compose.yml equivalent) — the
+  # streaming MECHANISM itself is proven locally via `manage.py runserver`
+  # (which also happily serves a StreamingHttpResponse); this service only
+  # changes production concurrency headroom, not correctness.
+  # ---------------------------------------------------------------------------
+  chat:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["python", "-m", "uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8001"]
+    env_file:
+      - ../web/.env.prod
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ---------------------------------------------------------------------------
   # Celery — main worker (default queue: scrape/stt-dispatch/embed/enrich/
   # deep-video/cluster/score/digest/affinity/ranking). Same image as
   # worker-interactive/worker-stt/beat below; only `command:` differs.
@@ -183,6 +216,7 @@ services:
       - caddy_config:/config
     depends_on:
       - web
+      - chat
     networks:
       - backend
 

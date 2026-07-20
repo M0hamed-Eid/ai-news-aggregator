@@ -507,3 +507,299 @@ a {
 #add-source-form:has(input[name="source_type"][value="rss"]:checked) .youtube-field {
   display: none;
 }
+
+/* ---------------------------------------------------------------------- */
+/* AI Assistant (M14) — floating RAG chat widget                          */
+/* z-index 1040 sits above Bootstrap's .sticky-top navbar (1020) and       */
+/* below its modal layer (1055) — no stacking conflict with anything else  */
+/* on the page.                                                            */
+/* ---------------------------------------------------------------------- */
+
+.ac-assistant-fab {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  z-index: 1040;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, var(--app-brand-dark), var(--app-brand));
+  color: #fff;
+  font-size: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--app-shadow-hover);
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.ac-assistant-fab:hover {
+  transform: scale(1.06);
+}
+
+.ac-assistant-fab:focus-visible {
+  outline: 2px solid var(--app-brand-dark);
+  outline-offset: 3px;
+}
+
+.ac-assistant-panel {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 5.5rem;
+  z-index: 1040;
+  width: min(400px, calc(100vw - 2rem));
+  max-height: min(640px, calc(100vh - 8rem));
+  display: flex;
+  flex-direction: column;
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow-hover);
+  overflow: hidden;
+}
+
+.ac-assistant-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1rem;
+  background: linear-gradient(135deg, var(--app-brand-dark), var(--app-brand));
+  color: #fff;
+  flex: none;
+}
+
+.ac-assistant-header-title {
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.ac-assistant-close {
+  background: transparent;
+  border: none;
+  color: #fff;
+  opacity: 0.85;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.25rem;
+}
+
+.ac-assistant-close:hover {
+  opacity: 1;
+}
+
+.ac-assistant-scope {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem 0;
+  flex-wrap: wrap;
+  flex: none;
+}
+
+.ac-scope-chip {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.8rem;
+}
+
+.ac-assistant-messages {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 220px;
+}
+
+.ac-assistant-empty {
+  margin: auto;
+  text-align: center;
+  color: var(--app-muted);
+  padding: 1rem;
+}
+
+.ac-assistant-empty i {
+  font-size: 1.75rem;
+  color: var(--app-brand);
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.ac-msg {
+  max-width: 88%;
+  padding: 0.65rem 0.9rem;
+  border-radius: 0.9rem;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.ac-msg p {
+  margin: 0 0 0.5rem;
+}
+
+.ac-msg p:last-child {
+  margin-bottom: 0;
+}
+
+.ac-msg-user {
+  align-self: flex-end;
+  background: var(--app-bg);
+  color: var(--app-ink);
+  border-bottom-right-radius: 0.25rem;
+}
+
+.ac-msg-assistant {
+  align-self: flex-start;
+  background: #f5f4ff; /* same wash as .app-recommend-box, reused directly */
+  color: var(--app-brand-dark);
+  border-bottom-left-radius: 0.25rem;
+}
+
+.ac-msg-assistant.ac-msg-unavailable {
+  background: #fdecec;
+  color: #8a2b2b;
+}
+
+.ac-citation {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.25rem;
+  margin: 0 0.1rem;
+  border-radius: 999px;
+  background: var(--app-brand);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-decoration: none;
+  vertical-align: super;
+  line-height: 1.1rem;
+}
+
+.ac-citation:hover {
+  background: var(--app-brand-dark);
+  color: #fff;
+}
+
+.ac-msg-sources {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(55, 48, 163, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.ac-msg-source-link {
+  font-size: 0.78rem;
+  color: var(--app-brand-dark);
+  text-decoration: none;
+  display: flex;
+  gap: 0.35rem;
+}
+
+.ac-msg-source-link:hover {
+  text-decoration: underline;
+}
+
+.ac-typing {
+  align-self: flex-start;
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.65rem 0.9rem;
+  background: #f5f4ff;
+  border-radius: 0.9rem;
+  border-bottom-left-radius: 0.25rem;
+}
+
+.ac-typing span {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--app-brand);
+  animation: ac-typing-bounce 1.1s infinite ease-in-out;
+}
+
+.ac-typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.ac-typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes ac-typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
+.ac-assistant-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0 1rem;
+  flex: none;
+}
+
+.ac-suggestion-chip {
+  border: 1px solid var(--app-border);
+  background: var(--app-surface);
+  color: var(--app-brand-dark);
+  font-size: 0.78rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.ac-suggestion-chip:hover {
+  border-color: var(--app-brand);
+  background: #f5f4ff;
+}
+
+.ac-assistant-form {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.85rem 1rem;
+  border-top: 1px solid var(--app-border);
+  flex: none;
+}
+
+.ac-assistant-form .form-control {
+  border-radius: 999px;
+}
+
+.ac-assistant-send {
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: none;
+  border-radius: 50%;
+  border: none;
+  background: var(--app-brand);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ac-assistant-send:hover {
+  background: var(--app-brand-dark);
+}
+
+.ac-assistant-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 576px) {
+  .ac-assistant-panel {
+    right: 0.75rem;
+    left: 0.75rem;
+    bottom: 5.25rem;
+    width: auto;
+  }
+}

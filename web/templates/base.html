@@ -139,6 +139,11 @@
     <script>window.__AC_USER_ID = null;</script>
   {% endif %}
   <script src="{% static 'js/beacon.js' %}" defer></script>
+  {% block page_context %}{% endblock %}
+  {% if user.is_authenticated %}
+    {% include "components/_ai_assistant.html" only %}
+    <script src="{% static 'js/assistant.js' %}" defer></script>
+  {% endif %}
   {% block extra_js %}{% endblock %}
 </body>
 </html>

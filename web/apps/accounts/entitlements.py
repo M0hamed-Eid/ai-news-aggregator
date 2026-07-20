@@ -33,6 +33,11 @@ FEATURE_PLANS: dict[str, set[str]] = {
     # was ever implemented when follow/unfollow shipped in M9 (see
     # web/apps/behavior/views.py::FollowToggleView, FREE_FOLLOW_LIMIT).
     "unlimited_follows": {User.Plan.PRO},
+    # M14 — RAG chat assistant. Free accounts still get real access (see
+    # apps.assistant.views.FREE_DAILY_MESSAGE_LIMIT for the numeric cap,
+    # same boolean-entitlement + counter shape as unlimited_follows above);
+    # Pro is unlimited.
+    "ai_assistant_unlimited": {User.Plan.PRO},
 }
 
 

@@ -30,6 +30,7 @@ from app.database.models.trend import Trend
 from app.database.models.trend_report import TrendReport
 from app.database.models.content_chunk import ContentChunk
 from app.database.models.stt_job import SttJob
+from app.database.models.rag_chunk import RagChunk
 
 __all__ = [
     "Article", "YoutubeVideo", "Embedding", "Source", "UserRanking", "DigestLog",
@@ -37,5 +38,5 @@ __all__ = [
     "TaxonomyTopic", "ContentTopic", "Entity", "ContentEntity",
     "ContentCluster", "ContentClusterMember", "ContentEnrichment", "ContentScore",
     "UserProfileVector", "PersonEntity", "Trend", "TrendReport",
-    "ContentChunk", "SttJob",
+    "ContentChunk", "SttJob", "RagChunk",
 ]

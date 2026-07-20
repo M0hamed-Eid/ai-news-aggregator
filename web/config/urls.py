@@ -34,5 +34,6 @@ urlpatterns = [
     path("news/", include("apps.news.urls")),
     path("onboarding/", include("apps.onboarding.urls")),
     path("behavior/", include("apps.behavior.urls")),
+    path("assistant/", include("apps.assistant.urls")),
     path("r/<str:token>/", DigestRedirectView.as_view(), name="digest_redirect"),
 ]

@@ -7,6 +7,21 @@
 # certbot step.
 
 {$SITE_DOMAIN} {
+	# M14 Phase D — streaming chat responses get their OWN route, routed to
+	# the isolated `chat` service (uvicorn/ASGI, docker-compose.prod.yml)
+	# instead of `web` (gunicorn/WSGI, 2 sync workers — a long-lived stream
+	# there would pin one of only 2 workers for the whole response). Must
+	# stay OUTSIDE `encode gzip` below — gzip buffers the full response
+	# before compressing, which would defeat incremental delivery entirely —
+	# and `flush_interval -1` tells Caddy to push each chunk to the client
+	# immediately rather than batching. `handle` blocks are evaluated
+	# first-match-wins, so this is checked before the catch-all reverse_proxy.
+	handle /assistant/stream/* {
+		reverse_proxy chat:8001 {
+			flush_interval -1
+		}
+	}
+
 	reverse_proxy web:8000
 
 	encode gzip

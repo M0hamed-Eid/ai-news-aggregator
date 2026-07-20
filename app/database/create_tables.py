@@ -52,7 +52,7 @@ def create_all_tables() -> None:
         TaxonomyTopic, ContentTopic, Entity, ContentEntity,
         ContentCluster, ContentClusterMember, ContentEnrichment, ContentScore,
         UserProfileVector, PersonEntity, Trend, TrendReport,
-        ContentChunk, SttJob,
+        ContentChunk, SttJob, RagChunk,
     )
 
     # Step 3: create tables

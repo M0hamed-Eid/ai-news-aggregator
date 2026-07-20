@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     "apps.behavior",  # user_events/saved_items (M7), depends on accounts
     "apps.catalog",  # read-only, pipeline-owned tables
     "apps.news",
+    "apps.assistant",  # M14 — RAG chat assistant, depends on catalog (read-only) + accounts (entitlements)
 ]
 
 MIDDLEWARE = [
@@ -166,3 +167,12 @@ STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
 STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default="")
 STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
 STRIPE_PRICE_ID_PRO = env("STRIPE_PRICE_ID_PRO", default="")
+
+# M14 Phase D — the ONE disclosed exception to "web/ is LLM-free": a direct
+# Groq client used ONLY for streaming chat generation (apps.assistant.
+# llm_client), since Celery's request/response boundary can't stream tokens.
+# Retrieval still crosses to the pipeline via Celery either way. Blank by
+# default; apps.assistant.llm_client.is_configured() gates the streaming
+# endpoint on this, same degrade-honestly discipline as Stripe/Gmail above —
+# the non-streaming endpoint (AssistantMessageView) works with zero setup.
+GROQ_API_KEY = env("GROQ_API_KEY", default="")

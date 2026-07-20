@@ -18,6 +18,7 @@ from run_pipeline import (
     run_embedding_phase,
     run_digest_phase,
     run_deep_video_phase,
+    run_rag_index_phase,
     run_clustering_phase,
     run_scoring_phase,
     run_trend_computation_phase,
@@ -65,6 +66,14 @@ def deep_video_task() -> dict:
     return result.__dict__
 
 
+@celery_app.task(name="app.tasks.pipeline_tasks.rag_index_task")
+def rag_index_task() -> dict:
+    """M14 — passage-level RAG index; exposed standalone for manual triggering / corpus backfill."""
+    result = PipelineResult()
+    run_rag_index_phase(result)
+    return result.__dict__
+
+
 @celery_app.task(name="app.tasks.pipeline_tasks.cluster_task")
 def cluster_task() -> dict:
     result = PipelineResult()
@@ -98,6 +107,7 @@ def run_full_pipeline_task(hours: int = DEFAULT_HOURS, skip_email: bool = False)
     run_embedding_phase(result)
     run_digest_phase(hours, dry_run=False, skip_email=skip_email, result=result)
     run_deep_video_phase(result)
+    run_rag_index_phase(result)
     run_clustering_phase(result)
     run_scoring_phase(result)
     run_trend_computation_phase(result)

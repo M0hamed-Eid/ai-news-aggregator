@@ -130,6 +130,11 @@ class PipelineResult:
     deep_video_processed: int = 0
     deep_video_errors: int = 0
 
+    rag_items_indexed:  int = 0
+    rag_chunks_written: int = 0
+    rag_skipped:        int = 0
+    rag_errors:         int = 0
+
     def print_summary(self) -> None:
         logger.info("=" * 60)
         logger.info("PIPELINE SUMMARY")
@@ -182,6 +187,12 @@ class PipelineResult:
             logger.info(
                 "  DeepVideo: processed=%4d  errors=%4d",
                 self.deep_video_processed, self.deep_video_errors,
+            )
+        if self.rag_items_indexed or self.rag_errors:
+            logger.info(
+                "  RAG idx  : items=%4d  chunks=%5d  skipped=%5d  errors=%4d",
+                self.rag_items_indexed, self.rag_chunks_written,
+                self.rag_skipped, self.rag_errors,
             )
         logger.info("=" * 60)
 
@@ -588,6 +599,106 @@ def run_embedding_phase(result: PipelineResult) -> None:
                 errors += 1
 
     logger.info(f"[Embeddings] Done. embedded={embedded} errors={errors}")
+
+
+def run_rag_index_phase(result: PipelineResult) -> None:
+    """
+    M14 — passage-level RAG index for the AI assistant ("Feature 2 (chatbot)").
+
+    Chunks each article/video into retrieval passages and embeds them with the
+    SAME all-MiniLM-L6-v2 model/space as the item-level `embeddings` table
+    (reused verbatim — no new model, no duplicate embedding infrastructure),
+    then upserts them into the dedicated `rag_chunks` table.
+
+    `rag_chunks` is a SEPARATE table from `embeddings` on purpose: clustering,
+    ranking candidate-generation, and Django semantic search all query
+    `embeddings` with content_type=None, so writing passage rows there would
+    silently pollute them. A separate table means those callers stay untouched.
+
+    Incremental: any item already indexed at the current RAG_INDEX_VERSION is
+    skipped, so the FIRST run backfills the whole corpus and later runs only
+    touch new arrivals. Articles are chunked by body (character-offset
+    citations); videos are windowed over transcript_segments (timestamp
+    citations), falling back to full content, then summary.
+    """
+    from app.database import get_db_session
+    from app.database.repositories.article_repository import ArticleRepository
+    from app.database.repositories.youtube_repository import YoutubeRepository
+    from app.database.repositories.rag_chunk_repository import RagChunkRepository
+    from app.database.models.rag_chunk import RAG_INDEX_VERSION
+    from app.embeddings.embedding_service import embed_texts
+    from app.rag.chunker import Passage, chunk_article, chunk_transcript, estimate_tokens
+
+    BATCH = 500
+    MAX_ITEMS = 20_000  # safety ceiling; matches run_clustering_phase's headroom
+
+    logger.info("[RAG] Starting passage-index phase (version=%s)", RAG_INDEX_VERSION)
+    items_indexed = chunks_written = skipped = errors = 0
+
+    def _index_item(rag_repo, content_type, content_id, passages) -> bool:
+        nonlocal items_indexed, chunks_written
+        if not passages:
+            return False
+        vectors = embed_texts([p.text for p in passages])
+        n = rag_repo.replace_for_content(content_type, content_id, passages, vectors, RAG_INDEX_VERSION)
+        items_indexed += 1
+        chunks_written += n
+        return True
+
+    with get_db_session() as db:
+        rag_repo = RagChunkRepository(db)
+
+        # ── Articles: chunk the body ──────────────────────────────────────
+        offset = 0
+        while offset < MAX_ITEMS:
+            batch = ArticleRepository(db).get_all(limit=BATCH, offset=offset)
+            if not batch:
+                break
+            for article in batch:
+                if rag_repo.is_indexed_at("article", article.id, RAG_INDEX_VERSION):
+                    skipped += 1
+                    continue
+                try:
+                    passages = chunk_article(article.content or "")
+                    if not passages and article.summary:
+                        passages = [Passage(text=article.summary.strip(),
+                                            token_count=estimate_tokens(article.summary))]
+                    if not _index_item(rag_repo, "article", article.id, passages):
+                        skipped += 1
+                except Exception:
+                    logger.exception("[RAG] Failed on article id=%s", article.id)
+                    errors += 1
+            offset += BATCH
+
+        # ── Videos: window the transcript (or fall back to content) ───────
+        offset = 0
+        while offset < MAX_ITEMS:
+            batch = YoutubeRepository(db).get_all(limit=BATCH, offset=offset)
+            if not batch:
+                break
+            for video in batch:
+                if rag_repo.is_indexed_at("youtube_video", video.id, RAG_INDEX_VERSION):
+                    skipped += 1
+                    continue
+                try:
+                    segments = video.transcript_segments or []
+                    passages = chunk_transcript(segments) if segments else chunk_article(video.content or "")
+                    if not passages and video.summary:
+                        passages = [Passage(text=video.summary.strip(),
+                                            token_count=estimate_tokens(video.summary))]
+                    if not _index_item(rag_repo, "youtube_video", video.id, passages):
+                        skipped += 1
+                except Exception:
+                    logger.exception("[RAG] Failed on video id=%s", video.id)
+                    errors += 1
+            offset += BATCH
+
+    result.rag_items_indexed += items_indexed
+    result.rag_chunks_written += chunks_written
+    result.rag_skipped += skipped
+    result.rag_errors += errors
+    logger.info("[RAG] Done. items_indexed=%d chunks_written=%d skipped=%d errors=%d",
+                items_indexed, chunks_written, skipped, errors)
 
 
 def run_clustering_phase(result: PipelineResult) -> None:
@@ -1350,6 +1461,16 @@ Examples:
     else:
         logger.info("[DeepVideo] Skipped (dry-run mode)")
 
+    # ── Step 3.3: RAG passage index (M14) ─────────────────────────────────
+    # After deep-video chunking so video passages use the freshest transcript
+    # (STT/enrichment may have just updated it), and before clustering — it is
+    # fully independent of clustering (rag_chunks is a separate table that
+    # clustering never reads), so ordering here is about content freshness only.
+    if not args.dry_run:
+        run_rag_index_phase(result)
+    else:
+        logger.info("[RAG] Skipped (dry-run mode)")
+
     # ── Step 3.5: clustering + quality scoring (M8) ───────────────────────
     # Run AFTER digest/enrichment so clustering works off the freshest
     # (post-enrichment) embeddings, and scoring can read the enrichment/
@@ -1369,6 +1490,7 @@ Examples:
         + result.articles_errors
         + len(result.digest_errors)
         + result.scoring_errors
+        + result.rag_errors
     )
     if total_errors > 0:
         logger.warning("Pipeline completed with %d error(s)", total_errors)

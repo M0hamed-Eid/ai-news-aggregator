@@ -43,6 +43,7 @@ celery_app = Celery(
         "app.tasks.profile_vector_tasks",
         "app.tasks.ranking_tasks",
         "app.tasks.search_tasks",
+        "app.tasks.rag_tasks",
         "app.tasks.source_submission_tasks",
         "app.tasks.source_revalidation_tasks",
         "app.tasks.trend_tasks",
@@ -65,6 +66,10 @@ celery_app.conf.enable_utc = True
 # import this app/config (that's the whole point — it stays dependency-free).
 celery_app.conf.task_routes = {
     "app.tasks.search_tasks.*": {"queue": "interactive"},
+    # M14 — RAG chat answers are interactive (a user is waiting synchronously
+    # on the result), same reasoning as search_tasks above — never the
+    # 6-hourly default queue, which can be busy for minutes at a time.
+    "app.tasks.rag_tasks.*": {"queue": "interactive"},
     # M10 — "add a source" needs live relevance feedback (a user is waiting
     # on the result synchronously), same reasoning as search_tasks above.
     "app.tasks.source_submission_tasks.*": {"queue": "interactive"},

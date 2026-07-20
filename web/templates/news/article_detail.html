@@ -104,3 +104,7 @@
 {% endif %}
 
 {% endblock %}
+
+{% block page_context %}
+<script type="application/json" id="ac-page-context">{"content_type": "article", "content_id": {{ article.pk }}}</script>
+{% endblock %}

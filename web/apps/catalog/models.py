@@ -531,6 +531,43 @@ class Embedding(ReadOnly, models.Model):
         return f"{self.content_type}:{self.content_id}"
 
 
+class RagChunk(ReadOnly, models.Model):
+    """
+    Passage-level RAG retrieval index (table: rag_chunks, M14 — the AI
+    assistant's "Feature 2 (chatbot)") — written by run_pipeline.py's
+    run_rag_index_phase(), read-only here. Same 384-dim all-MiniLM-L6-v2 vector
+    space as Embedding, so the chat retriever runs a cosine-distance query
+    directly on Django's own connection (identical mechanism to semantic
+    search), with one passage per row plus char offsets (articles) or start/end
+    seconds (videos) for grounded, deep-linkable citations. Distinct table from
+    `embeddings` on purpose — see the SQLAlchemy model's docstring.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    content_type = models.CharField(max_length=20)
+    content_id = models.BigIntegerField()
+    chunk_index = models.IntegerField()
+    text = models.TextField()
+    char_start = models.IntegerField(null=True, blank=True)
+    char_end = models.IntegerField(null=True, blank=True)
+    start_seconds = models.FloatField(null=True, blank=True)
+    end_seconds = models.FloatField(null=True, blank=True)
+    token_count = models.IntegerField(null=True, blank=True)
+    embedding = VectorField(dimensions=384)
+    index_version = models.CharField(max_length=40)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "rag_chunks"
+        ordering = ["content_type", "content_id", "chunk_index"]
+        verbose_name = "rag chunk"
+        verbose_name_plural = "rag chunks"
+
+    def __str__(self):
+        return f"{self.content_type}:{self.content_id} passage #{self.chunk_index}"
+
+
 class PersonEntity(ReadOnly, models.Model):
     """
     Links a person Entity to their own scrapeable footprint (table:
