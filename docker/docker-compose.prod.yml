@@ -111,6 +111,27 @@ services:
       - backend
 
   # ---------------------------------------------------------------------------
+  # M15 — Next.js frontend (Z.ai-generated UI, wired to the real Django/JSON
+  # backend). Own image (../frontend/Dockerfile), standalone Node server
+  # (output: "standalone", frontend/next.config.ts) — same "own image, own
+  # dependency set" convention as `web`/`chat` above. This container never
+  # talks to Postgres/Redis directly, only to `web`'s JSON API surface, and
+  # only ever reached via Caddy: every request that ISN'T one of Django's
+  # existing URL prefixes is routed here instead of `web` (see Caddyfile) —
+  # same-origin from the browser's perspective, so no CORS package exists
+  # anywhere in this app.
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - web
+    networks:
+      - backend
+
+  # ---------------------------------------------------------------------------
   # Celery — main worker (default queue: scrape/stt-dispatch/embed/enrich/
   # deep-video/cluster/score/digest/affinity/ranking). Same image as
   # worker-interactive/worker-stt/beat below; only `command:` differs.
@@ -217,6 +238,7 @@ services:
     depends_on:
       - web
       - chat
+      - frontend
     networks:
       - backend
 

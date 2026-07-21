@@ -6,6 +6,12 @@
       "runtimeExecutable": "web/.venv/Scripts/python.exe",
       "runtimeArgs": ["web/manage.py", "runserver", "127.0.0.1:8000"],
       "port": 8000
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
+      "port": 3000
     }
   ]
 }

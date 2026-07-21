@@ -7,10 +7,9 @@ from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
-from django.views.generic import TemplateView
 
 from apps.accounts.entitlements import user_can
-from apps.catalog.models import Article, DigestClickToken, YoutubeVideo
+from apps.catalog.models import DigestClickToken
 
 from .models import CONTENT_TYPE_CHOICES, SavedItem, UserEvent, UserFollow
 from .ratelimit import check_rate_limit, is_first_party
@@ -187,11 +186,11 @@ class DigestRedirectView(View):
     def get(self, request, token, *args, **kwargs):
         click_token = DigestClickToken.objects.filter(token=token).first()
         if click_token is None:
-            return redirect("home")
+            return redirect("/")
 
         content_object = click_token.content_object
         if content_object is None:
-            return redirect("home")
+            return redirect("/")
 
         UserEvent.objects.create(
             user_id=click_token.user_id,
@@ -202,33 +201,3 @@ class DigestRedirectView(View):
 
         target_url = getattr(content_object, "watch_url", None) or content_object.url
         return redirect(target_url)
-
-
-class LibraryView(LoginRequiredMixin, TemplateView):
-    """Saved items + read history — resolves SavedItem rows to real Article/YoutubeVideo objects."""
-
-    template_name = "behavior/library.html"
-
-    def _resolve(self, saved_items_qs):
-        """Resolve SavedItem rows to real Article/YoutubeVideo objects, carrying
-        is_saved/is_hidden onto each so the shared card partials render correctly
-        here too (same _article_card.html/_video_card.html as Home/Feed)."""
-        resolved = []
-        for saved in saved_items_qs:
-            model = Article if saved.content_type == "article" else YoutubeVideo
-            obj = model.objects.filter(pk=saved.content_id).first()
-            if obj is not None:
-                obj.is_saved = saved.is_saved
-                obj.is_hidden = saved.is_hidden
-                resolved.append(obj)
-        return resolved
-
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-        ctx["saved_items"] = self._resolve(
-            SavedItem.objects.filter(user=self.request.user, is_saved=True).order_by("-saved_at")
-        )
-        ctx["read_items"] = self._resolve(
-            SavedItem.objects.filter(user=self.request.user, is_read=True).order_by("-read_at")
-        )
-        return ctx

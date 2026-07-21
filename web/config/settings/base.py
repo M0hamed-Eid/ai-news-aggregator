@@ -128,10 +128,15 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Map Django's ERROR message tag to Bootstrap's "danger" alert class.
 MESSAGE_TAGS = {message_constants.ERROR: "danger"}
 
-# Auth flow routing (URL pattern names).
-LOGIN_URL = "accounts:login"
-LOGIN_REDIRECT_URL = "home"
-LOGOUT_REDIRECT_URL = "home"
+# Auth flow routing — literal SPA paths, not Django URL names. M15 retired
+# the classic accounts:login/home template views the SPA (frontend/) now
+# owns those routes entirely; every LoginRequiredMixin-gated JSON API view
+# (ProfileAPIView, BillingAPIView, OpsAPIView, etc.) still consults
+# LOGIN_URL as its anonymous-request fallback, so this must resolve without
+# reverse() ever touching a deleted URL name.
+LOGIN_URL = "/login"
+LOGIN_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/"
 
 # M13 — verification/password-reset emails, via Django's OWN mail
 # infrastructure (separate from the pipeline's Gmail-based EmailSender,

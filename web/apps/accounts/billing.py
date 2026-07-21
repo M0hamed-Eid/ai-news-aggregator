@@ -22,7 +22,6 @@ from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.shortcuts import redirect
-from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
@@ -36,45 +35,6 @@ def stripe_configured() -> bool:
     return bool(settings.STRIPE_SECRET_KEY and settings.STRIPE_PRICE_ID_PRO)
 
 
-class CreateCheckoutSessionView(LoginRequiredMixin, View):
-    """POST-only — redirects to Stripe's hosted Checkout page (test mode, subscription)."""
-
-    def post(self, request, *args, **kwargs):
-        if not stripe_configured():
-            messages.error(request, "Billing isn't configured yet on this deployment.")
-            return redirect("pricing")
-
-        if not request.user.email_verified:
-            messages.error(request, "Please verify your email before upgrading — check the banner above or resend it from your profile.")
-            return redirect("accounts:billing")
-
-        stripe.api_key = settings.STRIPE_SECRET_KEY
-
-        existing = StripeCustomer.objects.filter(user=request.user).first()
-        customer_kwargs = (
-            {"customer": existing.stripe_customer_id} if existing else {"customer_email": request.user.email}
-        )
-
-        try:
-            session = stripe.checkout.Session.create(
-                mode="subscription",
-                line_items=[{"price": settings.STRIPE_PRICE_ID_PRO, "quantity": 1}],
-                success_url=(
-                    request.build_absolute_uri(reverse("accounts:checkout_success"))
-                    + "?session_id={CHECKOUT_SESSION_ID}"
-                ),
-                cancel_url=request.build_absolute_uri(reverse("accounts:checkout_cancel")),
-                client_reference_id=str(request.user.id),
-                **customer_kwargs,
-            )
-        except stripe.error.StripeError as exc:
-            logger.error("Stripe Checkout session creation failed for user_id=%s: %s", request.user.id, exc)
-            messages.error(request, "Something went wrong starting checkout. Please try again shortly.")
-            return redirect("pricing")
-
-        return redirect(session.url)
-
-
 class CheckoutSuccessView(LoginRequiredMixin, View):
     """
     GET — Stripe redirects the browser here after a completed Checkout.
@@ -82,40 +42,27 @@ class CheckoutSuccessView(LoginRequiredMixin, View):
     "processing" message; the webhook has usually already landed by the time
     this page loads, but there's no hard guarantee of ordering, so the
     copy deliberately doesn't promise "you're Pro now" as a fact.
+
+    Redirects to the real SPA path (/billing), NOT the accounts:billing URL
+    name — that classic Django template view is gone (M15), but this view
+    itself stays: CreateCheckoutSessionAPIView (the live JSON checkout
+    endpoint the SPA actually calls) still points Stripe's success_url at
+    THIS view's URL name (reverse("accounts:checkout_success")), so real
+    paid checkouts land here regardless of which frontend started them.
     """
 
     def get(self, request, *args, **kwargs):
         messages.success(request, "Thanks! Your upgrade is processing — this usually takes just a few seconds.")
-        return redirect("accounts:billing")
+        return redirect("/billing")
 
 
 class CheckoutCancelView(LoginRequiredMixin, View):
+    """See CheckoutSuccessView's docstring — same "still live, redirect
+    target repointed to the SPA path" reasoning applies here."""
+
     def get(self, request, *args, **kwargs):
         messages.info(request, "Checkout canceled — no changes were made.")
-        return redirect("pricing")
-
-
-class BillingPortalView(LoginRequiredMixin, View):
-    """POST-only — redirects to Stripe's hosted subscription-management portal (cancel, update payment method)."""
-
-    def post(self, request, *args, **kwargs):
-        customer = StripeCustomer.objects.filter(user=request.user).first()
-        if not stripe_configured() or customer is None:
-            messages.error(request, "No active subscription to manage.")
-            return redirect("accounts:billing")
-
-        stripe.api_key = settings.STRIPE_SECRET_KEY
-        try:
-            portal_session = stripe.billing_portal.Session.create(
-                customer=customer.stripe_customer_id,
-                return_url=request.build_absolute_uri(reverse("accounts:billing")),
-            )
-        except stripe.error.StripeError as exc:
-            logger.error("Stripe billing portal session failed for user_id=%s: %s", request.user.id, exc)
-            messages.error(request, "Couldn't open the billing portal. Please try again shortly.")
-            return redirect("accounts:billing")
-
-        return redirect(portal_session.url)
+        return redirect("/pricing")
 
 
 # ---------------------------------------------------------------------------

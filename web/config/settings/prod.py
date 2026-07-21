@@ -29,12 +29,17 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 # origins including scheme, e.g. "https://app.example.com,https://example.com".
 CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
 
-# No MEDIA_ROOT/MEDIA_URL and no CORS package on purpose — this app has zero
-# file-upload/media features (confirmed via repo-wide grep before writing
-# this deployment plan) and is a same-origin, server-rendered Django-
-# template app with no separate SPA origin, so there is nothing for either
-# to do. Revisit only if a future milestone adds user-uploaded files or a
-# separate frontend origin.
+# No MEDIA_ROOT/MEDIA_URL on purpose — this app has zero file-upload/media
+# features (confirmed via repo-wide grep before writing this deployment
+# plan). Revisit only if a future milestone adds user-uploaded files.
+#
+# M15 — still no CORS package, even though a separate Next.js `frontend`
+# service now serves most pages (see docker/docker-compose.prod.yml +
+# Caddyfile). Caddy path-routes both services under ONE domain, so the
+# browser only ever sees a single origin — the frontend's fetch calls
+# (frontend/src/lib/api.ts) are same-origin requests, not cross-origin
+# ones, and Django's existing session-cookie + CSRF-cookie auth model
+# (CSRF_TRUSTED_ORIGINS below) needs no changes at all.
 
 LOGGING = {
     "version": 1,

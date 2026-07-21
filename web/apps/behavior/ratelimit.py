@@ -7,6 +7,7 @@ convention to match; kept intentionally small, no new dependency beyond the
 """
 from urllib.parse import urlparse
 
+from django.conf import settings
 from django.core.cache import cache
 
 
@@ -19,14 +20,32 @@ def is_first_party(request) -> bool:
     SECURE_REFERRER_POLICY defaults to "same-origin", so a legitimate
     same-origin beacon call reliably sends one of these; a cross-site call
     sends neither, or a mismatched host.
+
+    Also accepts any origin listed in CSRF_TRUSTED_ORIGINS — the SAME
+    setting this project already uses for "the SPA isn't literally
+    same-origin as Django but IS first-party" (settings/dev.py hardcodes
+    "http://localhost:3000" for exactly this reason: local dev runs Next.js
+    on a different port than Django's runserver, proxied via next.config.ts's
+    rewrites(), so a real browser-originated request here carries
+    Origin: http://localhost:3000 while request.get_host() reports Django's
+    own 127.0.0.1:8000 — a real mismatch confirmed live once the SPA
+    started calling this endpoint (M15 Phase 5), never triggered before
+    since beacon.js's only prior caller was Django's own directly-served
+    pages). In production Caddy unifies both services under one domain
+    (see settings/prod.py's own comment), so CSRF_TRUSTED_ORIGINS there is
+    empty by default and this extra check is a no-op.
     """
     host = request.get_host()
+    trusted_netlocs = {urlparse(o).netloc for o in settings.CSRF_TRUSTED_ORIGINS}
+
     origin = request.headers.get("Origin")
     if origin:
-        return urlparse(origin).netloc == host
+        netloc = urlparse(origin).netloc
+        return netloc == host or netloc in trusted_netlocs
     referer = request.headers.get("Referer")
     if referer:
-        return urlparse(referer).netloc == host
+        netloc = urlparse(referer).netloc
+        return netloc == host or netloc in trusted_netlocs
     return False
 
 

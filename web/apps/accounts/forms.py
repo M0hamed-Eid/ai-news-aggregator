@@ -1,6 +1,5 @@
 from django import forms
 from django.contrib.auth.forms import (
-    AuthenticationForm,
     PasswordResetForm,
     SetPasswordForm,
     UserCreationForm,
@@ -30,18 +29,6 @@ class RegisterForm(UserCreationForm):
         super().__init__(*args, **kwargs)
         self.fields["password1"].widget.attrs.update(BOOTSTRAP_INPUT)
         self.fields["password2"].widget.attrs.update(BOOTSTRAP_INPUT)
-
-
-class BootstrapAuthenticationForm(AuthenticationForm):
-    """Login form with Bootstrap styling. `username` maps to the email field."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.fields["username"].widget.attrs.update(
-            {**BOOTSTRAP_INPUT, "autofocus": True, "placeholder": "Email"}
-        )
-        self.fields["username"].label = "Email"
-        self.fields["password"].widget.attrs.update(BOOTSTRAP_INPUT)
 
 
 class BootstrapPasswordResetForm(PasswordResetForm):

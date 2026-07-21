@@ -1,0 +1,151 @@
+/* Shared shell for classic Django-rendered auth pages (password reset
+   confirm/complete) that must look indistinguishable from the SPA's own
+   auth pages (frontend/src/components/layout/AppShell.tsx's isAuthPage
+   wrapper + LoginPage.tsx's card). Tokens copied from
+   frontend/src/app/globals.css's :root/.dark blocks -- keep both in sync
+   if the design system's palette ever changes. */
+
+:root {
+  --radius: 0.75rem;
+  --background: #f8f9fc;
+  --card: #ffffff;
+  --foreground: #1a1a2e;
+  --ink-muted: #6b7280;
+  --input: #e5e7eb;
+  --border: #e5e7eb;
+  --primary: #4f46e5;
+  --primary-foreground: #ffffff;
+  --destructive: #ef4444;
+  --ring: #4f46e5;
+  --success-bg: #d1fae5;
+  --success-fg: #059669;
+  --warning-bg: #fef3c7;
+  --warning-fg: #d97706;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0c0d14;
+    --card: #14151f;
+    --foreground: #e4e4e9;
+    --ink-muted: #9ca3af;
+    --input: #2a2b3a;
+    --border: #2a2b3a;
+    --primary: #6366f1;
+    --primary-foreground: #ffffff;
+    --destructive: #f87171;
+    --ring: #6366f1;
+    --success-bg: #052e21;
+    --success-fg: #34d399;
+    --warning-bg: #3a2a05;
+    --warning-fg: #fbbf24;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.auth-shell {
+  width: 100%;
+  max-width: 26rem;
+}
+
+.auth-icon {
+  margin: 0 auto 1rem;
+  display: flex;
+  height: 3rem;
+  width: 3rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.auth-icon.success { background: var(--success-bg); color: var(--success-fg); }
+.auth-icon.warning { background: var(--warning-bg); color: var(--warning-fg); }
+
+.auth-header { text-align: center; margin-bottom: 1.5rem; }
+
+.auth-header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.auth-header p {
+  margin: 0.25rem 0 0;
+  font-size: 0.875rem;
+  color: var(--ink-muted);
+}
+
+form { display: flex; flex-direction: column; gap: 1rem; }
+
+.field { display: flex; flex-direction: column; gap: 0.5rem; }
+
+.field label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.field input {
+  height: 2.25rem;
+  width: 100%;
+  border-radius: calc(var(--radius) - 0.25rem);
+  border: 1px solid var(--input);
+  background: transparent;
+  color: var(--foreground);
+  padding: 0.25rem 0.75rem;
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.field input:focus-visible {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
+}
+
+.field .help-text { font-size: 0.75rem; color: var(--ink-muted); }
+.field .field-error { font-size: 0.75rem; color: var(--destructive); }
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 2.25rem;
+  width: 100%;
+  border-radius: calc(var(--radius) - 0.25rem);
+  border: none;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.btn-primary:hover { opacity: 0.9; }
+
+.auth-card-message {
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--ink-muted);
+  margin: 0 0 1.5rem;
+}

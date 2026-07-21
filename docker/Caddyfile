@@ -1,4 +1,4 @@
-# Reverse proxy + automatic HTTPS for the production Django app.
+# Reverse proxy + automatic HTTPS for the production app.
 #
 # {$SITE_DOMAIN} — set via the environment (docker-compose.prod.yml's caddy
 # service reads it from the shell, e.g. `SITE_DOMAIN=app.example.com` or a
@@ -15,14 +15,35 @@
 	# before compressing, which would defeat incremental delivery entirely —
 	# and `flush_interval -1` tells Caddy to push each chunk to the client
 	# immediately rather than batching. `handle` blocks are evaluated
-	# first-match-wins, so this is checked before the catch-all reverse_proxy.
+	# first-match-wins, so this is checked before every other block.
 	handle /assistant/stream/* {
 		reverse_proxy chat:8001 {
 			flush_interval -1
 		}
 	}
 
-	reverse_proxy web:8000
+	# M15 — every URL prefix Django still owns (the JSON API surface plus
+	# the handful of surfaces staying server-rendered — admin, static
+	# assets, email-linked password-reset/verification pages). Keep this
+	# list in sync with frontend/next.config.ts's DJANGO_PREFIXES, which
+	# proxies the exact same set in local dev via Next.js rewrites().
+	# Everything NOT matched here (home, search, feed, article/video/entity
+	# detail, sources, people, insights, library, profile, billing,
+	# preferences, onboarding, login/signup, pricing, ops, story clusters,
+	# trending stories — i.e. the whole Z.ai-designed app shell) falls
+	# through to `frontend`. M15 Phase 5 retired the classic (non-API)
+	# apps.news/apps.onboarding template routes entirely — those apps'
+	# real JSON APIs live under /api/news/* and /api/onboarding/*
+	# (already covered by /api/*), so bare /news/* and /onboarding/* are
+	# no longer Django-owned at all.
+	@django_paths path /api/* /admin/* /accounts/* /behavior/* /assistant/* /healthz/* /r/* /static/*
+	handle @django_paths {
+		reverse_proxy web:8000
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
 
 	encode gzip
 
