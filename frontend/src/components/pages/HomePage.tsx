@@ -128,7 +128,7 @@ export default function HomePage() {
   const canLoadMore = visibleCount < filteredItems.length || hasNextPage;
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6 md:px-6">
+    <div className="mx-auto w-full max-w-[1450px] px-6 py-6 xl:px-8">
       {/* Hero */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
