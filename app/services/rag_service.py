@@ -43,6 +43,7 @@ from app.database.models.django_readmodels import (
     DjangoUserProfile,
     DjangoUserSourceSubscription,
 )
+from app.database.models.embedding import Embedding
 from app.database.models.rag_chunk import RagChunk
 from app.database.models.source import Source
 from app.database.models.taxonomy_topic import TaxonomyTopic
@@ -72,6 +73,7 @@ TOP_K_DEFAULT = 8
 FETCH_MULTIPLIER = 6          # over-fetch before access-control filtering + dedup, same idea as search.py's limit*2
 MAX_CHUNKS_PER_DOCUMENT = 3   # source diversity cap for kb/topic scope — irrelevant for single-document scope
 CONTEXT_TOKEN_BUDGET = 2200   # total retrieved-passage tokens fed to the LLM, leaving headroom for system+question+answer
+DOCUMENT_CONTEXT_CHAR_BUDGET = 9000  # deterministic current-page fallback when passage index misses a specific article/video
 
 _NO_RESULTS_MESSAGE = (
     "I couldn't find anything in the knowledge base about that. "
@@ -246,6 +248,50 @@ def _assemble_sources(selected: List[Tuple[RagChunk, float, object]]) -> Tuple[s
     return "\n\n".join(lines), handle_to_citation
 
 
+def _document_context_source(db, content_type: str, content_id: int, parent) -> Tuple[str, Dict[str, Citation]]:
+    """Deterministic current-page context so pronoun questions do not depend on vector recall."""
+    title = getattr(parent, "title", None) or "(untitled)"
+    source = getattr(parent, "source", None)
+    url = getattr(parent, "url", "") or ""
+    summary = (getattr(parent, "summary", None) or "").strip()
+    content = (getattr(parent, "content", None) or "").strip()
+    if len(content) > DOCUMENT_CONTEXT_CHAR_BUDGET:
+        content = content[:DOCUMENT_CONTEXT_CHAR_BUDGET].rstrip() + "\n[Content truncated for chat context.]"
+
+    embedding_id = None
+    row = (
+        db.query(Embedding.id)
+        .filter(Embedding.content_type == content_type, Embedding.content_id == content_id)
+        .first()
+    )
+    if row is not None:
+        embedding_id = row[0]
+
+    handle_to_citation = {
+        "S1": Citation(
+            marker="S1",
+            content_type=content_type,
+            content_id=content_id,
+            chunk_index=-1,
+            title=title,
+            url=url,
+            source=source,
+            char_start=0 if content else None,
+            char_end=len(content) if content else None,
+        )
+    }
+    sources_block = "\n".join([
+        f"[S1] Current page context",
+        f"Title: {title}",
+        f"Summary: {summary or '(none)'}",
+        f"Source: {source or '(unknown)'}",
+        f"URL: {url or '(none)'}",
+        f"Embedding ID: {embedding_id if embedding_id is not None else '(not indexed)'}",
+        f"Content: {content or summary or '(no content available)'}",
+    ])
+    return sources_block, handle_to_citation
+
+
 def _build_scope_note(db, mode: str, scope: str, content_type, content_id, topic_slug, metadata: dict) -> str:
     if mode == "document":
         parent = metadata.get((content_type, content_id))
@@ -263,6 +309,17 @@ def _build_scope_note(db, mode: str, scope: str, content_type, content_id, topic
     if mode == "topic" and topic_slug:
         return f"The user is asking within the \"{topic_slug}\" topic — focus your answer on sources related to it.\n"
     return ""
+
+
+def _document_retrieval_query(question: str, parent) -> str:
+    title = getattr(parent, "title", None) or ""
+    summary = getattr(parent, "summary", None) or ""
+    return "\n".join([
+        "Current page retrieval anchor:",
+        f"Title: {title}",
+        f"Summary: {summary}",
+        f"User question: {question}",
+    ]).strip()
 
 
 def retrieve_context(
@@ -297,15 +354,27 @@ def retrieve_context(
 
     empty = RetrievalResult(mode=mode, question=question)
 
-    vector = embed_text(question)
+    document_parent = None
+    if mode == "document":
+        document_parent = (
+            ArticleRepository(db).get_by_id(content_id) if content_type == "article"
+            else YoutubeRepository(db).get_by_id(content_id)
+        )
+        if document_parent is None:
+            return empty
+
+    retrieval_query = _document_retrieval_query(question, document_parent) if document_parent is not None else question
+    vector = embed_text(retrieval_query)
     hits = _retrieve(db, vector, mode, content_type, content_id, topic_slug, top_k * FETCH_MULTIPLIER)
-    if not hits:
+    if not hits and mode != "document":
         return empty
 
     ids_by_type: Dict[str, Set[int]] = {}
     for chunk, _sim in hits:
         ids_by_type.setdefault(chunk.content_type, set()).add(chunk.content_id)
     metadata = _fetch_metadata(db, ids_by_type)
+    if document_parent is not None:
+        metadata[(content_type, content_id)] = document_parent
 
     excluded_categories, excluded_sources, user_visibility_keys, allowed_user_keys = _user_access_context(db, user_id)
     source_categories = get_source_categories(db)
@@ -324,7 +393,23 @@ def retrieve_context(
             continue  # private, unsubscribed source — must never leak into an answer
         allowed_hits.append((chunk, sim, parent))
 
+    document_context_allowed = False
+    if mode == "document" and document_parent is not None:
+        src = getattr(document_parent, "source", None)
+        document_context_allowed = not (
+            src in excluded_sources
+            or source_categories.get(src) in excluded_categories
+            or (src in user_visibility_keys and src not in allowed_user_keys)
+        )
+
     if not allowed_hits:
+        if document_context_allowed:
+            sources_block, handle_to_citation = _document_context_source(db, content_type, content_id, document_parent)
+            scope_note = _build_scope_note(db, mode, scope, content_type, content_id, topic_slug, metadata)
+            return RetrievalResult(
+                mode=mode, question=question, sources_block=sources_block,
+                handle_to_citation=handle_to_citation, scope_note=scope_note, has_results=True,
+            )
         return empty
 
     per_doc_cap = None if mode == "document" else MAX_CHUNKS_PER_DOCUMENT
@@ -345,9 +430,28 @@ def retrieve_context(
             break
 
     if not selected:
+        if document_context_allowed:
+            sources_block, handle_to_citation = _document_context_source(db, content_type, content_id, document_parent)
+            scope_note = _build_scope_note(db, mode, scope, content_type, content_id, topic_slug, metadata)
+            return RetrievalResult(
+                mode=mode, question=question, sources_block=sources_block,
+                handle_to_citation=handle_to_citation, scope_note=scope_note, has_results=True,
+            )
         return empty
 
     sources_block, handle_to_citation = _assemble_sources(selected)
+    if document_context_allowed:
+        current_sources_block, current_citation = _document_context_source(db, content_type, content_id, document_parent)
+        shifted_citations = {}
+        for handle, citation in handle_to_citation.items():
+            new_handle = f"S{int(handle[1:]) + 1}"
+            citation.marker = new_handle
+            shifted_citations[new_handle] = citation
+        sources_block = current_sources_block + "\n\n" + "\n\n".join(
+            block.replace(f"[S{i}]", f"[S{i + 1}]", 1)
+            for i, block in enumerate(sources_block.split("\n\n"), start=1)
+        )
+        handle_to_citation = {**current_citation, **shifted_citations}
     scope_note = _build_scope_note(db, mode, scope, content_type, content_id, topic_slug, metadata)
 
     return RetrievalResult(

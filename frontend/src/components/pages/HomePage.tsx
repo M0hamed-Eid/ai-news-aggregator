@@ -8,18 +8,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { api, parseContentRef } from '@/lib/api';
+import { getContentImageSrc, fallbackContentImage } from '@/lib/content-assets';
 import { useAppStore } from '@/lib/store';
 import ArticleCard from '@/components/shared/ArticleCard';
 import VideoCard from '@/components/shared/VideoCard';
 import TrendingBar from '@/components/shared/TrendingBar';
 import SkeletonCard from '@/components/shared/SkeletonCard';
 import type { ContentItem, ContentCategory, TrendingTopic, Source } from '@/lib/types';
-
-const GRADIENTS = [
-  'from-indigo-600 via-violet-600 to-purple-500',
-  'from-cyan-600 via-blue-600 to-indigo-500',
-  'from-emerald-600 via-teal-600 to-cyan-500',
-];
 
 const ITEMS_PER_PAGE = 12;
 
@@ -231,13 +226,21 @@ export default function HomePage() {
       >
         <h2 className="mb-4 text-sm font-semibold text-ink-muted uppercase tracking-wider">Featured</h2>
         <div className="grid gap-4 md:grid-cols-3">
-          {(firstPage?.featured ?? []).map((item, i) => (
+          {(firstPage?.featured ?? []).map((item) => (
             <button
               key={item.id}
               onClick={() => navigate(item.type === 'video' ? 'video-detail' : 'article-detail', { id: item.id })}
               className="group overflow-hidden rounded-xl border border-border bg-card text-left transition-all duration-200 hover:shadow-lg hover:-translate-y-1"
             >
-              <div className={`h-36 bg-gradient-to-br ${GRADIENTS[i % GRADIENTS.length]} opacity-70`} />
+              <div className="h-36 bg-muted">
+                <img
+                  src={getContentImageSrc(item)}
+                  alt=""
+                  loading="lazy"
+                  className="h-full w-full object-cover"
+                  onError={(e) => fallbackContentImage(e, item.source)}
+                />
+              </div>
               <div className="p-4">
                 <div className="mb-2 flex items-center gap-1.5">
                   <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">

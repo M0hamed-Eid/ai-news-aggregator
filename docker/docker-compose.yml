@@ -84,6 +84,97 @@ services:
       - backend
 
   # ---------------------------------------------------------------------------
+  # Celery — default worker for scheduled/local pipeline jobs.
+  # Consumes the default queue used by run_full_pipeline_task and ranking jobs.
+  # ---------------------------------------------------------------------------
+  worker-default:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: ai_news_worker_default
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-ai_news_user}:${POSTGRES_PASSWORD:-changeme_in_production}@db:5432/${POSTGRES_DB:-ai_news}
+      REDIS_URL: redis://redis:6379/0
+      DJANGO_BASE_URL: ${DJANGO_BASE_URL:-http://host.docker.internal:8000}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GMAIL_ADDRESS: ${GMAIL_ADDRESS:-}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+      HOURS_LOOKBACK: ${HOURS_LOOKBACK:-144}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LLM_PROVIDER: ${LLM_PROVIDER:-groq}
+      LOCAL_SIMPLE_MODEL: ${LOCAL_SIMPLE_MODEL:-llama3.1:8b}
+      WHISPER_MODEL: ${WHISPER_MODEL:-distil-large-v3}
+      RESIDENTIAL_PROXY_URL: ${RESIDENTIAL_PROXY_URL:-}
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ---------------------------------------------------------------------------
+  # Celery — STT worker for video transcription jobs dispatched by the pipeline.
+  # Kept on its dedicated queue so CPU-heavy transcription never blocks batch jobs.
+  # ---------------------------------------------------------------------------
+  worker-stt:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: ai_news_worker_stt
+    restart: unless-stopped
+    command: ["uv", "run", "celery", "-A", "app.celery_app:celery_app", "worker", "--pool=solo", "--loglevel=info", "-Q", "stt", "-n", "stt-worker@%h"]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-ai_news_user}:${POSTGRES_PASSWORD:-changeme_in_production}@db:5432/${POSTGRES_DB:-ai_news}
+      REDIS_URL: redis://redis:6379/0
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      WHISPER_MODEL: ${WHISPER_MODEL:-distil-large-v3}
+      RESIDENTIAL_PROXY_URL: ${RESIDENTIAL_PROXY_URL:-}
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ---------------------------------------------------------------------------
+  # Celery beat — local scheduler. Starts automatically with Compose and fires
+  # the code-defined schedules in app/celery_app.py, including every-6h pipeline.
+  # ---------------------------------------------------------------------------
+  beat:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: ai_news_beat
+    restart: unless-stopped
+    command: ["uv", "run", "celery", "-A", "app.celery_app:celery_app", "beat", "--loglevel=info"]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-ai_news_user}:${POSTGRES_PASSWORD:-changeme_in_production}@db:5432/${POSTGRES_DB:-ai_news}
+      REDIS_URL: redis://redis:6379/0
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GMAIL_ADDRESS: ${GMAIL_ADDRESS:-}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+      HOURS_LOOKBACK: ${HOURS_LOOKBACK:-144}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LLM_PROVIDER: ${LLM_PROVIDER:-groq}
+      LOCAL_SIMPLE_MODEL: ${LOCAL_SIMPLE_MODEL:-llama3.1:8b}
+      WHISPER_MODEL: ${WHISPER_MODEL:-distil-large-v3}
+      RESIDENTIAL_PROXY_URL: ${RESIDENTIAL_PROXY_URL:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ---------------------------------------------------------------------------
   # pgAdmin 4 — optional web UI for browsing the DB during development.
   # Remove this service (or comment it out) before deploying to production.
   # ---------------------------------------------------------------------------
@@ -120,6 +211,8 @@ volumes:
   pgadmin_data:
     driver: local
   redis_data:
+    driver: local
+  hf_cache:
     driver: local
 
 # =============================================================================

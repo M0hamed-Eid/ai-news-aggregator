@@ -6,7 +6,6 @@ import { useState, useCallback } from 'react';
 import {
   Copy,
   Check,
-  RefreshCw,
   ThumbsUp,
   ThumbsDown,
   Sparkles,
@@ -57,7 +56,7 @@ export default function MessageBubble({ message, onFollowUpClick }: MessageBubbl
         <div
           className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
             isUser
-              ? 'rounded-tr-sm bg-primary text-primary-foreground'
+              ? 'rounded-tr-sm bg-primary text-white dark:text-primary-foreground'
               : 'rounded-tl-sm bg-muted text-ink'
           }`}
         >
@@ -111,12 +110,6 @@ export default function MessageBubble({ message, onFollowUpClick }: MessageBubbl
               title="Copy"
             >
               {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-            </button>
-            <button
-              className="rounded p-1 text-ink-muted/50 transition-colors hover:bg-muted hover:text-ink-muted"
-              title="Regenerate"
-            >
-              <RefreshCw className="h-3 w-3" />
             </button>
             <button
               onClick={() => setLiked(liked === 'up' ? null : 'up')}

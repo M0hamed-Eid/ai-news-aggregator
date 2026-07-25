@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import type { ArticleItem, ContentCategory } from '@/lib/types';
 import { useAppStore } from '@/lib/store';
 import { parseContentRef } from '@/lib/api';
+import { fallbackContentImage, getContentImageSrc } from '@/lib/content-assets';
 import { useImpressionTracking, trackClick } from '@/hooks/useBehaviorTracking';
 import TopicBadge from './TopicBadge';
 import DepthGauge from './DepthGauge';
@@ -40,15 +41,8 @@ export default function ArticleCard({ item, showReason = false }: ArticleCardPro
 
   if (hidden) return null;
 
-  // Real per-article photo (item.imageUrl) if the source ever supplies one,
-  // else the source's own branded artwork (frontend/public/sources/{key}.png)
-  // — restores web/apps/catalog/templatetags/source_display.py's
-  // "source_artwork" filter, which the old Django card ALWAYS rendered one
-  // or the other of. The Z.ai-authored ArticleCard never had an image slot
-  // at all (unlike its own VideoCard, which at least had a gradient
-  // placeholder) — every article card was pure text, a real regression
-  // vs. the old app where every card had a real visual.
-  const thumbnailSrc = item.imageUrl || `/sources/${item.source}.png`;
+  // Real article image first, then branded source artwork, then default source art.
+  const thumbnailSrc = getContentImageSrc(item);
 
   return (
     <div ref={impressionRef} className="group flex items-start gap-3 rounded-lg border border-border bg-card p-4 transition-all duration-200 hover:shadow-md hover:-translate-y-[1px]">
@@ -60,19 +54,12 @@ export default function ArticleCard({ item, showReason = false }: ArticleCardPro
         className="relative shrink-0 overflow-hidden rounded-lg bg-muted"
         style={{ width: 160, height: 90 }}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element -- mixed
-            external (real article photos) + local (source artwork) sources,
-            not worth a next/image remote-pattern config for this. */}
         <img
           src={thumbnailSrc}
           alt=""
           loading="lazy"
           className="h-full w-full object-cover"
-          onError={(e) => {
-            if (!e.currentTarget.src.endsWith('_default.png')) {
-              e.currentTarget.src = '/sources/_default.png';
-            }
-          }}
+          onError={(e) => fallbackContentImage(e, item.source)}
         />
       </button>
       <div className="min-w-0 flex-1">

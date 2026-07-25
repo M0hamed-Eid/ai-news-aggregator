@@ -12,7 +12,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet';
-import { useTheme } from 'next-themes';
+import { useHasMounted, useTheme } from '@/components/ThemeProvider';
 import { useAppStore } from '@/lib/store';
 import type { PageRoute } from '@/lib/types';
 
@@ -44,6 +44,7 @@ export default function Sidebar() {
   const { currentPage, navigate, isLoggedIn, user, logout, sidebarOpen, setSidebarOpen } = useAppStore();
   const [collapsed, setCollapsed] = useState(false);
   const { setTheme, theme } = useTheme();
+  const mounted = useHasMounted();
 
   const NavItemButton = ({
     id, label, icon: Icon, requiresAuth, requiresPro, badge
@@ -158,9 +159,9 @@ export default function Sidebar() {
                 <Settings className="mr-2 h-4 w-4" /> Preferences
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
-                {theme === 'dark' ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
-                {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+              <DropdownMenuItem onClick={() => setTheme(mounted && theme === 'dark' ? 'light' : 'dark')}>
+                {mounted && theme === 'dark' ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
+                {mounted && theme === 'dark' ? 'Light mode' : 'Dark mode'}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive">
@@ -196,7 +197,7 @@ export default function Sidebar() {
     <>
       {/* Desktop sidebar */}
       <aside
-        className={`hidden lg:flex flex-col border-r border-border bg-sidebar h-screen sticky top-0 shrink-0 transition-all duration-200 ${collapsed ? 'w-[68px]' : 'w-[260px]'}`}
+        className={`hidden lg:flex flex-col border-r border-border bg-sidebar h-screen sticky top-0 shrink-0 transition-all duration-200 ${collapsed ? 'w-[68px]' : 'w-[288px]'}`}
       >
         {sidebarContent}
       </aside>

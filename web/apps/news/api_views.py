@@ -28,12 +28,13 @@ from apps.accounts.entitlements import user_can
 from apps.behavior.models import SavedItem
 from apps.behavior.services import attach_saved_state, mark_read
 from apps.catalog.models import (
-    Article, ContentTopic, Entity, Source, TaxonomyTopic, TrendReport, UserRanking, YoutubeVideo,
+    Article, ContentScore, ContentTopic, Entity, Source, TaxonomyTopic, TrendReport, UserRanking, YoutubeVideo,
 )
 from apps.catalog.services import (
     attach_topics, get_chunks, get_cluster_member_count, get_full_story, get_hot_clusters, get_related_items,
     get_trending, get_user_visibility_source_keys, resolve_narrative_citations,
 )
+from apps.news.feed_ranking import content_type_for_item, diversify_home_items
 from apps.news.search import semantic_search
 from apps.onboarding.models import UserSourceSubscription
 
@@ -46,6 +47,7 @@ from .serializers import (
 # instead of ever shipping the entire catalog in one response.
 DEFAULT_ITEMS_LIMIT = 300
 MAX_ITEMS_LIMIT = 500
+HOME_DIVERSITY_CANDIDATE_MULTIPLIER = 3
 
 
 def _clamp_limit(request) -> int:
@@ -101,6 +103,27 @@ def _apply_home_filters(request, articles, videos):
             pass
 
     return articles, videos
+
+
+def _quality_scores_for_items(items) -> dict:
+    keys = [(content_type_for_item(item), item.pk) for item in items]
+    if not keys:
+        return {}
+
+    article_ids = [content_id for content_type, content_id in keys if content_type == "article"]
+    video_ids = [content_id for content_type, content_id in keys if content_type == "youtube_video"]
+    query = Q()
+    if article_ids:
+        query |= Q(content_type="article", content_id__in=article_ids)
+    if video_ids:
+        query |= Q(content_type="youtube_video", content_id__in=video_ids)
+    if not query:
+        return {}
+
+    return {
+        (row.content_type, row.content_id): row.score
+        for row in ContentScore.objects.filter(query)
+    }
 
 
 def _serialize_trending() -> list:
@@ -171,15 +194,14 @@ class HomeFeedAPIView(View):
                 pass
 
         limit = _clamp_limit(request)
-        # Fetch one extra from each table as a has-more sentinel — a plain
-        # `len(articles[:limit] + videos[:limit]) > limit` check would be
-        # wrong whenever one table alone already supplies `limit` items
-        # (e.g. limit=300, 500 matching articles, 0 videos: that slice is
-        # exactly 300, not > 300, hiding 200 real remaining articles).
-        combined = list(articles[:limit + 1]) + list(videos[:limit + 1])
+        candidate_limit = min(MAX_ITEMS_LIMIT, max(limit + 1, limit * HOME_DIVERSITY_CANDIDATE_MULTIPLIER))
+        # Fetch a wider recent pool, then diversify in Python. The first-stage
+        # queryset is still recency-bounded; the second stage adds quality and
+        # source penalties so one busy source cannot dominate the visible page.
+        combined = list(articles[:candidate_limit + 1]) + list(videos[:candidate_limit + 1])
         combined.sort(key=lambda item: item.published_at, reverse=True)
         has_more = len(combined) > limit
-        combined = combined[:limit]
+        combined = diversify_home_items(combined, limit, quality_scores=_quality_scores_for_items(combined))
 
         attach_saved_state(request.user, combined)
         attach_topics(combined)

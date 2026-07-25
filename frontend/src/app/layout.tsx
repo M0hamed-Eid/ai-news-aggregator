@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
-import { ThemeProvider } from "next-themes";
+import { ThemeProvider } from "@/components/ThemeProvider";
 import RouterBridge from "@/components/RouterBridge";
 import SessionHydrator from "@/components/SessionHydrator";
 import BehaviorTracker from "@/components/BehaviorTracker";
@@ -37,21 +37,17 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
+        suppressHydrationWarning
       >
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="system"
-          enableSystem
-          disableTransitionOnChange
-        >
+        <ThemeProvider>
           <Providers>
             <RouterBridge />
             <SessionHydrator />
             <BehaviorTracker />
             {children}
           </Providers>
+          <Toaster richColors position="bottom-right" />
         </ThemeProvider>
-        <Toaster richColors position="bottom-right" />
       </body>
     </html>
   );
