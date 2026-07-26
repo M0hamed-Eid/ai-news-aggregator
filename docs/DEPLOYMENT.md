@@ -133,6 +133,16 @@ databases (Upstash's managed Redis doesn't reliably support multi-DB
 
 ## 4. Database migration (zero data loss)
 
+**Use Neon's DIRECT connection string, not the pooled one, for
+restore/migration.** Neon's dashboard shows a "Connection pooling" toggle —
+turn it OFF to get the direct string (hostname has no `-pooler` segment).
+Confirmed live: running `pg_restore` against the *pooled* connection string
+reports success (exit 0) but silently creates zero tables — Neon's pooler
+runs in PgBouncer transaction mode, which doesn't reliably support the kind
+of multi-statement session `pg_restore` needs. The pooled string is fine for
+the running app's normal query traffic; it is NOT fine for `pg_dump`/
+`pg_restore`.
+
 Run these from the repo root, on your LOCAL machine (they use Docker to
 reach both the local dev container and the remote Neon database — no local
 Postgres client install needed):
@@ -152,6 +162,40 @@ Postgres client install needed):
 `verify_migration.ps1` exits non-zero if any table's row count doesn't
 match between local and Neon — do not proceed to cutover until it passes
 clean.
+
+### If your network blocks outbound port 5432
+
+Some networks (corporate/managed machines especially) block outbound
+Postgres (5432) entirely while allowing normal HTTPS through — confirmed
+live on this project's own dev machine (times out from both Docker and a
+direct Python connection; even tunneling through Docker Desktop's own HTTP
+proxy failed, since that proxy only allows CONNECT to port 443). If
+`restore_db.ps1`/`verify_migration.ps1` hang or refuse to connect, don't
+assume Neon or the scripts are broken — check this first (`Test-NetConnection
+<neon-host> -Port 5432` from PowerShell, or the raw TCP test in
+`scripts/verify_migration.ps1`'s troubleshooting notes).
+
+Workaround that doesn't depend on fixing the local network: GitHub-hosted
+Actions runners have normal, unrestricted outbound access, so they can reach
+Neon directly. Push the export to a throwaway branch and let a workflow do
+the restore there instead:
+
+1. Add a `NEON_DATABASE_URL` repo secret (Settings → Secrets and variables →
+   Actions) — the DIRECT connection string, not pooled.
+2. `git checkout -b db-migration-temp && git add -f ai_news_export.dump .github/workflows/migrate-db-once.yml && git commit -m "..." && git push -u origin db-migration-temp`
+   (the dump is normally gitignored — `-f` overrides that for this one
+   throwaway commit only).
+3. The push triggers `.github/workflows/migrate-db-once.yml` automatically —
+   watch it in the Actions tab; its last step prints row counts for every
+   table plus total DB size, the same proof `verify_migration.ps1` gives
+   locally.
+4. Once confirmed, delete the throwaway branch (`git push origin --delete
+   db-migration-temp && git branch -D db-migration-temp`) so the dump
+   doesn't linger in git history longer than necessary.
+
+This was actually how this project's own production data was migrated —
+confirmed live: 3,444 articles / 123 videos / 3,567 embeddings / 3,480
+enrichment rows / 8 users / 4,793 events, all matching.
 
 ### Database restore (disaster recovery)
 
@@ -223,13 +267,12 @@ Encrypt challenge will fail).
 | API | N/A | Public REST API is out of scope (deferred per `docs/ROADMAP.md`, same as M13) |
 
 Postgres: Neon project created (`neondb`, AWS us-east-1) — connection string
-lives in `.env.prod`/`web/.env.prod` (gitignored, not in this doc). **Not yet
-migrated**: this dev machine's network blocks outbound port 5432 to Neon
-(confirmed from both Docker and a direct Python connection — timeouts/
-refused on all 3 of Neon's backend IPs, while normal HTTPS traffic works
-fine). Nothing was written to Neon; the database is still empty. Run
-`scripts/export_db.ps1` → `restore_db.ps1` → `verify_migration.ps1` (see
-Section 4) from a network that allows outbound 5432 once available.
+lives in `.env.prod`/`web/.env.prod` (gitignored, not in this doc). **Migrated
+and verified**: this dev machine's network blocks outbound port 5432 to
+Neon (confirmed from both Docker and a direct Python connection), so the
+migration ran via the GitHub Actions workaround documented in Section 4
+instead. Verified row counts: 3,444 articles / 123 videos / 3,567
+embeddings / 3,480 enrichment rows / 8 users / 4,793 events — 37MB total.
 
 ---
 
