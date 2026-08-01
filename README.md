@@ -1,12 +1,20 @@
-# AI News Aggregator — Backend Setup Guide
+# AI News Aggregator (AI Compass) — Setup & Operations Guide
 
-Complete guide to spinning up the database, running the pipeline, and
-verifying everything works end to end.
+Complete guide to spinning up the database, running the pipeline, serving the
+web app and the frontend, and verifying everything works end to end.
+
+**Preparing for a project defense / want to understand the system deeply?**
+Read [`docs/PROJECT_DEEP_DIVE_AND_VIVA.md`](docs/PROJECT_DEEP_DIVE_AND_VIVA.md)
+— a code-derived walkthrough of every stage, every formula, every model, every
+failure path, plus ~80 exam questions with answers.
 
 **Deploying to production?** See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
 for the full $0/month deployment guide (Oracle Cloud + Docker Compose
 primary path, Render + GitHub Actions fallback path, database migration
 with zero data loss, redeploy/rollback procedures, and known limitations).
+
+**In a hurry?** Jump straight to the
+[Complete Command Reference](#complete-command-reference) near the end.
 
 ---
 
@@ -14,36 +22,49 @@ with zero data loss, redeploy/rollback procedures, and known limitations).
 
 ```
 ai-news-aggregator/
-├── app/
-│   ├── config.py                        # Channel list, scraper settings
-│   ├── scrapers/
-│   │   ├── base_scraper.py              # ScrapedArticle dataclass + BaseScraper
-│   │   ├── youtube_scraper.py
-│   │   └── blog_scraper.py
-│   ├── database/
-│   │   ├── __init__.py                  # Public API: get_db_session, models, repos
-│   │   ├── base.py                      # SQLAlchemy DeclarativeBase
-│   │   ├── session.py                   # Engine + SessionLocal + get_db_session()
-│   │   ├── create_tables.py             # One-time table initialisation script
-│   │   ├── models/
-│   │   │   ├── __init__.py
-│   │   │   ├── article.py               # OpenAI + Anthropic blog posts
-│   │   │   └── youtube_video.py         # YouTube transcripts
-│   │   └── repositories/
-│   │       ├── __init__.py
-│   │       ├── base_repository.py       # Generic CRUD (get_by_id, delete, count)
-│   │       ├── article_repository.py    # Article-specific queries + bulk insert
-│   │       └── youtube_repository.py    # Video-specific queries + bulk insert
-│   ├── agents/                          # (Phase 2 — curator, digest, email)
-│   └── services/                        # (Phase 2 — scheduler, email sender)
+├── app/                                 # PIPELINE — SQLAlchemy, Python 3.14, all ML deps
+│   ├── config.py                        # Infra settings only (business data lives in the DB)
+│   ├── celery_app.py                    # Celery app: queues, routes, beat schedule
+│   ├── scrapers/                        # base + blog, youtube, rss, arxiv, github, federal_register, huggingface
+│   ├── agents/                          # enrichment, assistant (RAG), trend_narrative, chunk_summary, email
+│   ├── services/                        # digest, ranking, rag, recipients, relevance_gate, stt, email_sender
+│   ├── embeddings/embedding_service.py  # all-MiniLM-L6-v2, 384-dim, LOCAL
+│   ├── rag/chunker.py                   # passage chunking (~180 tok, 40 overlap)
+│   ├── ranking/types.py                 # UserProfile / DigestItem / RankedArticle
+│   ├── llm/client_factory.py            # the ONE Groq-vs-Ollama routing decision
+│   ├── eval/ranking_eval.py             # NDCG@10 / MAP / shadow-mode comparison
+│   ├── tasks/                           # 11 Celery task modules
+│   └── database/
+│       ├── session.py                   # Engine + SessionLocal + get_db_session()
+│       ├── create_tables.py             # One-time init: extension + create_all + alembic stamp
+│       ├── seed_sources.py              # Source Registry (11 rows)
+│       ├── seed_taxonomy_topics.py      # Controlled topic vocabulary (~27 rows)
+│       ├── models/                      # 23 SQLAlchemy models + django_readmodels.py (read-only mirror)
+│       └── repositories/                # 22 repositories over BaseRepository[T]
+├── web/                                 # DJANGO 5.2 — Python 3.13, ZERO ML deps, own venv
+│   ├── apps/accounts/                   # User (email login), profiles, entitlements, Stripe
+│   ├── apps/onboarding/                 # personas, interests, digest settings, exclusions, subscriptions
+│   ├── apps/behavior/                   # user_events, saved_items, user_follows, rate limiting
+│   ├── apps/catalog/                    # READ-ONLY mirrors of 22 pipeline tables (managed=False)
+│   ├── apps/news/                       # JSON API (11 endpoints), semantic search, home ranking
+│   ├── apps/assistant/                  # RAG chat: non-streaming + SSE streaming
+│   └── config/                          # settings/{base,dev,prod}.py, urls.py, routers.py
+├── frontend/                            # NEXT.JS 16 SPA — React 19, Tailwind 4, shadcn/ui
+│   └── src/{app,components,lib}/        # 24 routes, page components, api.ts, store.ts
 ├── docker/
-│   └── docker-compose.yml               # PostgreSQL + pgAdmin
-├── tests/
-│   ├── test_scrapers.py
-│   ├── test_blog_scraper.py
-│   └── test_database.py                 # Repository + model + session tests
-├── run_pipeline.py                      # Main entry point
-├── .env.example
+│   ├── docker-compose.yml               # DEV: postgres + redis + worker-default + worker-stt + beat + pgadmin
+│   ├── docker-compose.prod.yml          # PROD: redis + web + chat + frontend + 3 workers + beat + caddy
+│   └── Caddyfile                        # TLS + path routing
+├── alembic/                             # Pipeline migrations (Django has its own)
+├── tests/                               # pytest — SQLite-backed DB tests + scraper tests
+├── docs/
+│   ├── PROJECT_DEEP_DIVE_AND_VIVA.md    # full technical deep dive + defense prep
+│   ├── DEPLOYMENT.md
+│   ├── ROADMAP.md
+│   └── USER_GUIDE.md
+├── run_pipeline.py                      # Pipeline CLI + the phase functions Celery imports
+├── Dockerfile                           # pipeline image (Python 3.14)
+├── .env.example                         # pipeline env template
 └── pyproject.toml
 ```
 
@@ -51,30 +72,91 @@ ai-news-aggregator/
 
 ## Phase 1 — Environment Setup
 
-### 1. Copy and fill the environment file
+### 1. Copy and fill the environment files
+
+There are **two** env files — one per codebase.
 
 ```bash
-cp .env.example .env
+cp .env.example .env              # pipeline (app/, run_pipeline.py, Celery)
+cp web/.env.example web/.env      # Django (already has sane localhost defaults)
 ```
 
-Edit `.env`:
-```
+Root `.env` — the variables that actually matter:
+
+```ini
+# --- Database (the pipeline connects on host port 5433, see docker-compose.yml) ---
 POSTGRES_DB=ai_news
 POSTGRES_USER=ai_news_user
-POSTGRES_PASSWORD=your_strong_password_here
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-DATABASE_URL=postgresql+psycopg2://ai_news_user:your_strong_password_here@localhost:5432/ai_news
-OPENAI_API_KEY=sk-...
+POSTGRES_PASSWORD=changeme_in_production
+DATABASE_URL=postgresql+psycopg2://ai_news_user:changeme_in_production@localhost:5433/ai_news
+
+# --- Redis: Celery broker + result backend (DB 0). Django's cache uses DB 1. ---
+REDIS_URL=redis://127.0.0.1:6379/0
+
+# --- Django base URL, used to build tracked digest-click links /r/<token>/ ---
+DJANGO_BASE_URL=http://127.0.0.1:8000
+
+# --- LLM: Groq is the default provider. NOT OpenAI. ---
+GROQ_API_KEY=gsk_...
+LLM_PROVIDER=groq                 # "groq" (default) | "local" (Ollama, "simple" tier ONLY)
+LOCAL_SIMPLE_MODEL=llama3.1:8b    # used only when LLM_PROVIDER=local
+
+# --- Digest email (Gmail app password, NOT your account password) ---
+GMAIL_ADDRESS=you@gmail.com
+GMAIL_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
+
+# --- Pipeline behaviour ---
+HOURS_LOOKBACK=144                # 6 days — the REAL lookback window
+LOG_LEVEL=INFO
+
+# --- Speech-to-text (M12), local faster-whisper ---
+WHISPER_MODEL=distil-large-v3     # or distil-medium.en / small / tiny for speed
+
+# --- Optional: residential proxy for YouTube / Anthropic scraping ---
+RESIDENTIAL_PROXY_URL=
 ```
 
-### 2. Install Python dependencies
+> **Note:** this project uses **Groq**, not OpenAI. There is no `OPENAI_API_KEY`
+> anywhere in the codebase — the `openai` SDK is imported only as an
+> OpenAI-*compatible* client for Ollama (`http://localhost:11434/v1`).
+
+`web/.env` needs at minimum:
+
+```ini
+DJANGO_SECRET_KEY=...
+DJANGO_DEBUG=True
+DATABASE_URL=postgres://ai_news_user:changeme_in_production@localhost:5433/ai_news
+REDIS_URL=redis://127.0.0.1:6379/1          # Django cache — DB 1, NOT 0
+CELERY_BROKER_URL=redis://127.0.0.1:6379/0  # Celery broker — DB 0, NOT 1
+GROQ_API_KEY=                                # only needed for STREAMING chat
+GMAIL_ADDRESS=                                # optional: real verification/reset emails
+GMAIL_APP_PASSWORD=
+STRIPE_SECRET_KEY=                            # optional: billing degrades honestly without these
+STRIPE_PUBLISHABLE_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRICE_ID_PRO=
+```
+
+### 2. Install dependencies (three separate environments)
 
 ```bash
+# 1) Pipeline — root .venv, Python 3.14, managed by uv
 uv sync
-# or
-pip install -r requirements.txt
+
+# 2) Django — SEPARATE venv on Python 3.13
+cd web && python -m venv .venv && .venv/Scripts/pip install -r requirements.txt && cd ..
+
+# 3) Frontend — Node
+cd frontend && npm install && cd ..
+
+# Playwright's headless Chromium (needed by BlogScraper for anthropic.com)
+uv run playwright install chromium
 ```
+
+> **Why three environments?** The pipeline needs torch / sentence-transformers /
+> faster-whisper / Playwright; Django deliberately has **zero** ML dependencies
+> so it stays small and fast. They also run different Python versions (3.14 vs
+> 3.13 — Django 5.2 officially targets ≤ 3.13).
 
 ---
 
@@ -109,17 +191,36 @@ Run this ONCE after starting Postgres for the first time.
 It is safe to re-run — it uses `CREATE TABLE IF NOT EXISTS`.
 
 ```bash
+# 1) Pipeline tables: enables pgvector, creates 23 tables, stamps Alembic head
 python -m app.database.create_tables
+
+# 2) Seed the Source Registry (11 rows) and the topic vocabulary (~27 rows)
+python -m app.database.seed_sources
+python -m app.database.seed_taxonomy_topics
+
+# 3) Django tables
+cd web && .venv/Scripts/python.exe manage.py migrate && cd ..
 ```
 
-Expected output:
+Expected output from step 1:
 ```
 10:00:01 | app.database.session | INFO | Database connection: OK
+10:00:01 | __main__ | INFO | Enabling pgvector extension...
+10:00:01 | __main__ | INFO | pgvector extension enabled
 10:00:01 | __main__ | INFO | Loading models...
 10:00:01 | __main__ | INFO | Creating tables (CREATE TABLE IF NOT EXISTS)...
-10:00:01 | __main__ | INFO | Tables available: ['articles', 'youtube_videos']
-10:00:01 | __main__ | INFO | Done. Database is ready.
+10:00:01 | __main__ | INFO | Tables available: ['articles', 'youtube_videos', 'embeddings',
+  'rag_chunks', 'sources', 'user_rankings', 'digest_log', 'user_affinities',
+  'digest_click_tokens', 'taxonomy_topics', 'content_topics', 'entities', 'content_entities',
+  'content_clusters', 'content_cluster_members', 'content_enrichment', 'content_scores',
+  'user_profile_vectors', 'person_entities', 'trends', 'trend_reports', 'content_chunks', 'stt_jobs']
+10:00:01 | __main__ | INFO | Stamping Alembic head (schema changes go through migrations from here on)...
+Done. Database is ready (schema + Alembic state both current).
 ```
+
+`create_tables.py` is idempotent (`CREATE TABLE IF NOT EXISTS`) and ends by
+running `alembic stamp head`, so a brand-new dev DB and an already-migrated one
+converge on the same Alembic state.
 
 ---
 
@@ -164,41 +265,59 @@ generated file's imports if you touch `embeddings.vector` later.
 
 ```
                          ┌───────────────────────┐
-                         │   PostgreSQL (5433)   │
-                         │  pgvector extension   │
+                         │   PostgreSQL (5433)   │   dev: Docker (pgvector/pgvector:pg16)
+                         │  pgvector extension   │   prod: managed Neon
                          └───────────┬───────────┘
               writes/reads (own tables only)
            ┌─────────────────────────┼─────────────────────────┐
            │                                                    │
-┌──────────▼───────────┐                              ┌─────────▼──────────┐
-│  Pipeline (app/)      │                              │  Web (web/, Django) │
-│  SQLAlchemy           │◄──── read-only mirrors ─────►│  users/profiles/... │
-│  articles, sources,   │      (both directions)       │  personalized /feed  │
-│  embeddings, ...      │                              └──────────────────────┘
-└──────────┬────────────┘
-           │ enqueues via
-┌──────────▼────────────┐        ┌───────────────────────┐
-│  Redis (6379)          │◄──────►│  Celery worker (main)  │  --pool=solo, DEFAULT queue:
-│  broker + result store │        │  app/tasks/*           │  scrape/embed/enrich/cluster/score/
-│  DB 0 (pipeline)       │        └───────────────────────┘  affinity/profile-vector/ranking/digest
-└──────────┬─────────────┘        ┌───────────────────────┐
-           │                      │  Celery worker (M9)    │  --pool=solo -Q interactive: ONLY
-           │                      │  interactive queue     │  search_tasks.embed_query_task —
-           │                      └───────────────────────┘  never blocked behind a 6h pipeline run
+┌──────────▼───────────┐                              ┌─────────▼──────────────┐
+│  Pipeline (app/)      │                              │  Web (web/, Django 5.2) │
+│  SQLAlchemy, Py 3.14  │◄──── read-only mirrors ─────►│  users/profiles/events  │
+│  ML deps: torch,      │      (both directions)       │  ZERO ML deps           │
+│  sentence-transformers│                              │  JSON API + auth + chat │
+│  faster-whisper,      │                              └─────────┬───────────────┘
+│  playwright           │                                         │ same-origin
+└──────────┬────────────┘                              ┌─────────▼───────────────┐
+           │ enqueues via                              │  Frontend (Next.js 16)   │
+┌──────────▼────────────┐                              │  :3000 dev / container   │
+│  Redis (6379)          │                              └──────────────────────────┘
+│  DB 0 = Celery broker  │
+│  DB 1 = Django cache   │
+└──────────┬─────────────┘
+           │  ┌──────────────────────────┐  --pool=solo, DEFAULT queue:
+           ├─►│ Celery worker (default)   │  scrape / stt-dispatch / embed / enrich /
+           │  └──────────────────────────┘  digest / deep-video / rag-index / cluster /
+           │                                 score / trends / affinity / profile-vector / ranking
+           │  ┌──────────────────────────┐  -Q interactive: embed_query_task,
+           ├─►│ Celery worker (interactive)│  rag_answer_task, rag_retrieve_task,
+           │  └──────────────────────────┘  evaluate_and_register_source_task
+           │  ┌──────────────────────────┐  -Q stt: transcribe_video_task
+           ├─►│ Celery worker (stt)       │  (yt-dlp + faster-whisper, CPU-heavy)
+           │  └──────────────────────────┘
            │ schedules
-┌──────────▼─────────────┐
-│  Celery beat            │  fires run_full_pipeline_task every 6h, ranking every 3h,
-│  (app/celery_app.py)    │  affinity + profile-vector aggregation nightly
+┌──────────▼─────────────┐  run_full_pipeline_task  every 6h  (crontab 0 */6, UTC)
+│  Celery beat            │  rank_all_users_task      every 3h  (crontab 30 */3)
+│  (app/celery_app.py)    │  aggregate_affinities      03:00    profile vectors 03:15
+│  code-defined crontabs  │  revalidate_user_sources   1st @ 04:00
+│  NO django-celery-beat  │  weekly trend report       Mon @ 06:00
 └──────────────────────────┘
 
-Django's cache uses a SEPARATE Redis DB (1, not 0) — see REDIS_URL vs.
-CELERY_BROKER_URL in web/config/settings/base.py. Django's search.py is a
-Celery CLIENT only (no torch/sentence-transformers) — it enqueues onto the
-interactive queue above; the actual embedding model runs in the pipeline's
-worker process.
-
-Manual/one-off runs still work standalone: `python run_pipeline.py [flags]`
-never touches Celery or Redis — it calls the same phase functions directly.
+Key facts:
+• Django's cache uses a SEPARATE Redis DB (1, not 0) — see REDIS_URL vs.
+  CELERY_BROKER_URL in web/config/settings/base.py. Mixing them is a known bug class.
+• Django's search.py / rag_client.py / source_submission.py are Celery CLIENTS only
+  (no torch, no sentence-transformers) — they enqueue onto the interactive queue;
+  the actual models run in the pipeline's worker process.
+• broker_transport_options.visibility_timeout is raised to 6 HOURS: a full pipeline run
+  takes ~88 minutes and the Redis default of 1 hour caused constant task re-delivery.
+• Manual/one-off runs work standalone: `python run_pipeline.py [flags]` never touches
+  Celery or Redis — it calls the same phase functions directly.
+• In PRODUCTION, Caddy path-routes ONE domain across three services:
+    /assistant/stream/*  -> chat:8001    (uvicorn/ASGI, SSE, flush_interval -1, no gzip)
+    /api /admin /accounts /behavior /assistant /healthz /r /static -> web:8000 (gunicorn)
+    everything else      -> frontend:3000 (Next.js standalone)
+  Because it's one origin, this project has NO CORS package anywhere.
 ```
 
 ---
@@ -241,15 +360,21 @@ python -m celery -A app.celery_app:celery_app worker --pool=solo --loglevel=info
 python -m celery -A app.celery_app:celery_app beat --loglevel=info
 ```
 
-### Run a dedicated "interactive" worker (M9 — required for semantic search)
+### Run a dedicated "interactive" worker (REQUIRED for search, RAG chat, and add-a-source)
 
-Semantic search (`/search/`) embeds the user's query via a Celery task
-(`app.tasks.search_tasks.embed_query_task`) so Django never needs its own
-copy of `sentence-transformers`. That task is routed to its own
-`interactive` queue and needs its **own worker process** — not the default
-queue above, which the 6-hourly full pipeline run can occupy for minutes
-at a time (a search request queued behind a running scrape/enrich pass
-would simply time out).
+Three user-facing features enqueue work synchronously and wait for a result:
+
+| Feature | Task | Client timeout |
+|---|---|---|
+| Semantic search (`/search`) | `search_tasks.embed_query_task` | 5 s |
+| **RAG chat** (`/assistant/message/`) | `rag_tasks.rag_answer_task` | 25 s |
+| **RAG chat streaming** (`/assistant/stream/`) | `rag_tasks.rag_retrieve_task` | 15 s |
+| Add a source | `source_submission_tasks.evaluate_and_register_source_task` | 20 s |
+
+All are routed to the `interactive` queue and need their **own worker
+process** — not the default queue above, which the 6-hourly full pipeline run
+can occupy for minutes at a time (a request queued behind a running
+scrape/enrich pass would simply time out).
 
 ```bash
 # Terminal 3 — ONLY consumes the interactive queue, stays responsive even
@@ -257,8 +382,17 @@ would simply time out).
 python -m celery -A app.celery_app:celery_app worker --pool=solo --loglevel=info -Q interactive -n interactive-worker@%h
 ```
 
-If this worker isn't running, `/search/` degrades gracefully to keyword
-search after a 5s timeout (a visible banner tells the user) — it never 500s.
+Behaviour without this worker:
+- `/search` degrades gracefully to keyword search after a 5 s timeout and
+  returns `usedSemantic: false` so the UI can show an honest banner — never a 500.
+- **RAG chat returns HTTP 503** ("temporarily unavailable"). There is deliberately
+  no fallback — there's no sane keyword substitute for a generated, cited answer.
+- "Add a source" times out with an error message.
+
+> ⚠️ `docker/docker-compose.yml` (dev) does **not** define an interactive worker
+> service — only `worker-default`, `worker-stt`, and `beat`. If you run the dev
+> compose stack alone, you must start this worker on the host. The production
+> compose file (`docker-compose.prod.yml`) *does* include `worker-interactive`.
 
 ### Run a dedicated "stt" worker (M12 — speech-to-text for caption-less video)
 
@@ -301,6 +435,8 @@ expected/accepted at this project's scale, not a bug.
 | `app.tasks.profile_vector_tasks.compute_profile_vectors_task` | M9: nightly decayed weighted-mean embedding per user (`user_profile_vectors`) from click/save/digest_click events |
 | `app.tasks.ranking_tasks.rank_all_users_task` | M9: the two-stage deterministic ranker, on its own 3-hour schedule — decoupled from digest cadence so `/feed` stays fresh |
 | `app.tasks.search_tasks.embed_query_task` | M9: embeds a free-text search query — routed to the `interactive` queue only |
+| `app.tasks.rag_tasks.rag_answer_task` | M14: full RAG chat turn — condense → embed → pgvector retrieval over `rag_chunks` → access-control filter → assemble numbered sources → Groq `llama-3.3-70b-versatile` (temp 0.3, max_tokens 700) → server-side citation validation. Routed to the `interactive` queue |
+| `app.tasks.rag_tasks.rag_retrieve_task` | M14 Phase D: retrieval **only** (stops before generation) — returns a ready `system_prompt` + `handle_to_citation` so Django's SSE endpoint can open its own Groq stream. Routed to the `interactive` queue |
 | `app.tasks.source_submission_tasks.evaluate_and_register_source_task` | M10: runs the AI-relevance gate against a user-submitted feed and registers it if accepted — routed to the `interactive` queue (a user is waiting live for the result) |
 | `app.tasks.source_revalidation_tasks.revalidate_user_sources_task` | M10: monthly re-check of every user-submitted source against the same relevance gate — deactivates newly off-topic sources, reactivates previously-rejected ones that are relevant again |
 | `app.tasks.trend_tasks.generate_weekly_trend_report_task` | M11: the weekly grounded, cited trend narrative (Pro) — retrieval-grounded LLM call with handle-based citation resolution, auto-publishes, emails effective-Pro users |
@@ -493,51 +629,71 @@ docker compose -f docker/docker-compose.yml ps        # confirm db + redis show 
 **Step 2 — Initialize the database** (first time only — safe to re-run, idempotent)
 
 ```bash
-python -m app.database.create_tables         # CREATE TABLE IF NOT EXISTS + stamps Alembic head
-python -m app.database.seed_sources          # 9 Source Registry rows
+python -m app.database.create_tables         # pgvector extension + 23 tables + stamps Alembic head
+python -m app.database.seed_sources          # Source Registry (11 rows)
 python -m app.database.seed_taxonomy_topics  # 27 taxonomy topics (M8)
-cd web && python manage.py migrate && cd ..
+cd web && .venv/Scripts/python.exe manage.py migrate && cd ..
+cd web && .venv/Scripts/python.exe manage.py createsuperuser && cd ..   # optional
 ```
 
-**Step 3 — Django development server** (required to browse the site)
+**Step 3 — Django development server** (required for the JSON API, auth, and chat)
 
 ```bash
 cd web
-web/.venv/Scripts/python.exe manage.py runserver 127.0.0.1:8000
+.venv/Scripts/python.exe manage.py runserver 127.0.0.1:8000
 ```
 
-→ http://127.0.0.1:8000
+→ http://127.0.0.1:8000 (API + admin). The **UI** is served by Next.js — see Step 4.
 
-**Step 4 — Celery worker, default queue** (required for scheduled scrape/enrich/rank/digest — NOT required just to browse)
+**Step 4 — Next.js frontend** (required to actually use the app)
+
+```bash
+cd frontend
+npm run dev            # http://localhost:3000
+```
+
+`frontend/next.config.ts` proxies `/api`, `/admin`, `/accounts`, `/behavior`,
+`/assistant`, `/healthz`, `/r`, and `/static` to `http://127.0.0.1:8000` via
+Next.js `rewrites()` — the dev-mode equivalent of what Caddy does in production.
+**Browse the app at http://localhost:3000, not :8000.**
+
+**Step 5 — Celery worker, default queue** (required for scheduled scrape/enrich/rank/digest — NOT required just to browse)
 
 ```bash
 python -m celery -A app.celery_app:celery_app worker --pool=solo --loglevel=info
 ```
 
-**Step 5 — Interactive worker** (M9 — required for semantic search only)
+**Step 6 — Interactive worker** (required for semantic search, **RAG chat**, and add-a-source)
 
 ```bash
 python -m celery -A app.celery_app:celery_app worker --pool=solo --loglevel=info -Q interactive -n interactive-worker@%h
 ```
 
-Without this, `/search/` still works — it degrades to keyword search after a 5s timeout, with a visible banner.
+Without this: `/search` degrades to keyword search; **RAG chat returns 503**;
+"add a source" times out.
 
-**Step 6 — Celery beat** (required only if you want the schedules below to fire automatically)
+**Step 7 — STT worker** (optional — only for videos whose captions are unavailable)
+
+```bash
+python -m celery -A app.celery_app:celery_app worker --pool=solo --loglevel=info -Q stt -n stt-worker@%h
+```
+
+**Step 8 — Celery beat** (required only if you want the schedules to fire automatically)
 
 ```bash
 python -m celery -A app.celery_app:celery_app beat --loglevel=info
 ```
 
-**Step 7 — Pipeline CLI** (on-demand, whenever you want fresh content or to force a phase)
+**Step 9 — Pipeline CLI** (on-demand, whenever you want fresh content or to force a phase)
 
 ```bash
-python run_pipeline.py                    # full run: scrape -> enrich -> digest -> cluster -> score
+python run_pipeline.py                    # full run, all 9 phases
 python run_pipeline.py --skip-scraping    # re-process what's already in the DB
 ```
 
 That's a fully running system: Postgres + Redis + pgAdmin in Docker, Django
-serving the site, two Celery workers, beat firing the schedule, and the
-pipeline CLI available on demand.
+serving the API, Next.js serving the UI, three Celery workers, beat firing the
+schedule, and the pipeline CLI available on demand.
 
 ---
 
@@ -546,18 +702,21 @@ pipeline CLI available on demand.
 | Terminal | Runs | Required? |
 |---|---|---|
 | 1 | Docker (`up -d`, then leave it — or just check `ps` occasionally) | Required once |
-| 2 | Django dev server | Required to browse the site |
-| 3 | Celery worker (default queue) | Required for scheduled/background jobs; not required if you only ever trigger things manually |
-| 4 | Celery worker (interactive queue) | Required for semantic search; everything else works without it |
-| 5 | Celery beat | Required only for schedules to fire automatically — never required for manual/dev work |
-| 6 | Manual pipeline runs, `manage.py shell`, ad-hoc debugging | Optional, as-needed |
+| 2 | Django dev server (`:8000`) | Required — serves the whole API |
+| 3 | Next.js dev server (`:3000`) | Required to see the UI |
+| 4 | Celery worker (default queue) | Required for scheduled/background jobs; not needed if you only trigger things manually |
+| 5 | Celery worker (**interactive** queue) | Required for semantic search, **RAG chat**, and add-a-source |
+| 6 | Celery worker (**stt** queue) | Only for caption-less videos; everything else works without it |
+| 7 | Celery beat | Required only for schedules to fire automatically — never required for manual/dev work |
+| 8 | Manual pipeline runs, `manage.py shell`, ad-hoc debugging | Optional, as-needed |
 
 **Minimum viable dev loop** (browse the site + trigger things manually, no
-background automation): Terminals **1 and 2** only, running
-`python run_pipeline.py` by hand in a spare terminal whenever you want new
-content.
+background automation): Terminals **1, 2, and 3** only, running
+`python run_pipeline.py` by hand in a spare terminal whenever you want new content.
 
-**Full production-like loop**: all 6.
+**Add Terminal 5** the moment you want to demo semantic search or the chatbot.
+
+**Full production-like loop**: all 8.
 
 ---
 
@@ -579,8 +738,22 @@ schema per app.
 
 | Owner | Tables | Migrated by |
 |---|---|---|
-| Pipeline (SQLAlchemy) | `articles`, `youtube_videos`, `embeddings`, `sources`, `user_rankings`, `digest_log`, `user_affinities`, `digest_click_tokens`, `taxonomy_topics`, `content_topics`, `entities`, `content_entities`, `content_clusters`, `content_cluster_members`, `content_enrichment`, `content_scores`, `user_profile_vectors`, `person_entities`, `trends`, `trend_reports`, `content_chunks`, `stt_jobs` | Alembic |
-| Django | `users` (+ M13's `email_verified` column), `user_profiles`, `personas`, `interests`, `user_interests`, `user_digest_settings`, `user_exclusions`, `user_events`, `saved_items`, `user_follows`, `user_source_subscriptions`, `stripe_customers` (M13) | Django migrations |
+| Pipeline (SQLAlchemy) | `articles`, `youtube_videos`, `embeddings`, **`rag_chunks`** (M14), `sources`, `user_rankings`, `digest_log`, `user_affinities`, `digest_click_tokens`, `taxonomy_topics`, `content_topics`, `entities`, `content_entities`, `content_clusters`, `content_cluster_members`, `content_enrichment`, `content_scores`, `user_profile_vectors`, `person_entities`, `trends`, `trend_reports`, `content_chunks`, `stt_jobs` — **23 tables** | Alembic |
+| Django | `users` (+ `email_verified`), `user_profiles`, `personas`, `interests`, `user_interests`, `user_digest_settings`, `user_exclusions`, `user_events`, `saved_items`, `user_follows`, `user_source_subscriptions`, `stripe_customers`, **`chat_conversations`**, **`chat_messages`** (M14) | Django migrations |
+
+**The two vector tables — know the difference:**
+
+| | `embeddings` | `rag_chunks` |
+|---|---|---|
+| Rows per item | exactly **1** (unique on `content_type,content_id`) | **many** (one per passage) |
+| Text embedded | `summary` → `content[:2000]` → `title` | the **original body / transcript**, chunked (~180 tok, 40 overlap) |
+| Written by | `run_embedding_phase` + `DigestService._reembed` | `run_rag_index_phase` |
+| Read by | clustering, ranking candidate generation, Django semantic search, relevance gate, profile vectors | **RAG retrieval only** |
+| ANN index | **none** (exact scan) | **HNSW, `vector_cosine_ops`** |
+
+Both use the same model and the same space (`all-MiniLM-L6-v2`, **384 dims**,
+normalized) — `rag_chunks` imports `EMBEDDING_DIM` from `embedding.py` so they
+can never drift.
 
 M13 is the first milestone with **zero pipeline/Alembic schema change** — Stripe
 customer/subscription mapping (`stripe_customers`) and `email_verified` are
@@ -812,16 +985,29 @@ python -m app.database.seed_taxonomy_topics                # Taxonomy (27 rows)
 
 **Celery queues:**
 
-- **`celery`** (default) — scrape, embed, enrich, cluster, score, trends
-  (M11 burst detection), digest, nightly affinity aggregation, nightly
+- **`celery`** (default) — scrape, STT dispatch, embed, enrich, digest,
+  deep-video chaptering, RAG passage indexing, cluster, score, trends
+  (M11 burst detection), nightly affinity aggregation, nightly
   profile-vector computation, ranking, the monthly user-source
-  re-validation job, and (M11) the weekly trend-narrative report. One
+  re-validation job, and the weekly trend-narrative report. One
   worker process, `--pool=solo`.
-- **`interactive`** (M9, extended M10) — `search_tasks.embed_query_task`
-  and `source_submission_tasks.evaluate_and_register_source_task`. A
-  SEPARATE worker process, so a search request or an "add a source"
-  submission never queues behind a multi-minute pipeline run on the
-  default queue.
+- **`interactive`** (M9, extended M10 + M14) — `search_tasks.embed_query_task`,
+  **`rag_tasks.rag_answer_task`**, **`rag_tasks.rag_retrieve_task`**, and
+  `source_submission_tasks.evaluate_and_register_source_task`. A
+  SEPARATE worker process, so a search request, a chat message, or an
+  "add a source" submission never queues behind a multi-minute pipeline
+  run on the default queue.
+- **`stt`** (M12) — `stt_tasks.transcribe_video_task` only (yt-dlp audio pull +
+  `faster-whisper` CPU transcription, minutes per video). Its own worker so it
+  never blocks either of the other two queues. Ideally runs from a
+  **residential IP** — yt-dlp is more likely to be blocked from a datacenter IP.
+
+Routing is declared in `app/celery_app.py::task_routes` with module wildcards
+(`app.tasks.search_tasks.*`, `app.tasks.rag_tasks.*`,
+`app.tasks.source_submission_tasks.*` → `interactive`; `app.tasks.stt_tasks.*`
+→ `stt`). That wildcard is exactly why `source_revalidation_tasks` is a
+**separate module** from `source_submission_tasks` — it shares the same
+relevance gate but is a batch job that belongs on the default queue.
 
 **Scheduled jobs** (Celery beat — all crontab, code-defined in
 `app/celery_app.py`, no DB-backed schedule table):
@@ -1056,11 +1242,350 @@ the dev server. See buglog `web-014`.
 
 ## Production Deployment Checklist
 
-- [ ] Change all default passwords in `.env`
-- [ ] Set `POSTGRES_HOST` to your RDS / Cloud SQL endpoint
+- [ ] Change all default passwords in `.env` / `.env.prod` / `web/.env.prod`
+- [ ] Point `DATABASE_URL` at the managed Postgres (Neon) endpoint — the prod
+      compose file has **no `db` service** on purpose
 - [ ] Remove the `pgadmin` service from docker-compose.yml
-- [ ] Set `LOG_LEVEL=WARNING` in production `.env`
-- [ ] Run the pipeline via Celery beat instead of a raw cron entry (see
-      "Background Jobs" below) — cron/manual `run_pipeline.py` still works
-      as a fallback for one-off runs.
-- [ ] Add monitoring: alert if pipeline exits with code 1 (errors occurred)
+- [ ] Never ship `POSTGRES_HOST_AUTH_METHOD: trust` (dev compose only)
+- [ ] Set `LOG_LEVEL=WARNING` in the production `.env`
+- [ ] `DJANGO_DEBUG=False`, real `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`,
+      and `DJANGO_CSRF_TRUSTED_ORIGINS` (full origins **with scheme**)
+- [ ] Set `SITE_DOMAIN` in `docker/.env` so Caddy can request a Let's Encrypt cert
+- [ ] Run the pipeline via Celery beat, not a raw cron entry — the manual
+      `run_pipeline.py` CLI still works as a fallback for one-off runs
+- [ ] Confirm `worker-interactive` is running, or search/chat/add-source break
+- [ ] Add monitoring: alert if `run_pipeline.py` exits with code 1, **and**
+      alert if beat stops firing — `run_full_pipeline_task` returns normally
+      even when phases recorded errors, so the Celery path never surfaces failure
+
+---
+
+# Complete Command Reference
+
+Everything you can run, grouped by what you're trying to do. Unless noted,
+run from the **repository root** with the root `.venv` active.
+
+## Docker services
+
+```bash
+# Start everything (dev): postgres, redis, worker-default, worker-stt, beat, pgadmin
+docker compose -f docker/docker-compose.yml up -d
+
+# Start only the datastores (recommended for local dev — run workers on the host)
+docker compose -f docker/docker-compose.yml up -d db redis
+
+# Status / logs / stop
+docker compose -f docker/docker-compose.yml ps
+docker compose -f docker/docker-compose.yml logs -f db
+docker compose -f docker/docker-compose.yml logs -f worker-default
+docker compose -f docker/docker-compose.yml down
+docker compose -f docker/docker-compose.yml down -v      # ALSO WIPES the volumes
+
+# Rebuild the pipeline image after changing Dockerfile / pyproject.toml
+docker compose -f docker/docker-compose.yml build --no-cache
+docker compose -f docker/docker-compose.yml up -d --force-recreate worker-default
+
+# Health checks
+docker exec ai_news_redis redis-cli ping                 # -> PONG
+docker exec ai_news_db pg_isready -U ai_news_user -d ai_news
+```
+
+## Production stack
+
+```bash
+docker compose -f docker/docker-compose.prod.yml up -d --build
+docker compose -f docker/docker-compose.prod.yml ps
+docker compose -f docker/docker-compose.prod.yml logs -f web
+docker compose -f docker/docker-compose.prod.yml logs -f worker-interactive
+docker compose -f docker/docker-compose.prod.yml logs -f caddy
+docker compose -f docker/docker-compose.prod.yml restart worker-default
+docker compose -f docker/docker-compose.prod.yml down
+```
+
+## Database initialisation & seeding
+
+```bash
+python -m app.database.create_tables            # extension + 23 tables + alembic stamp head
+python -m app.database.seed_sources             # Source Registry, 11 rows, idempotent
+python -m app.database.seed_taxonomy_topics     # ~27 taxonomy topics, idempotent
+```
+
+## Backfills (deliberate, one-off)
+
+```bash
+# Enrichment for pre-M8 rows (they have summaries but no content_enrichment row)
+python -m app.database.backfill_enrichment --limit 50 --provider local   # Ollama, $0
+python -m app.database.backfill_enrichment --provider groq                # full corpus, Groq
+python -m app.database.backfill_enrichment --limit 100 --version v1-backfill-ollama
+
+# transcript_segments for videos scraped before M12
+python -m app.database.backfill_transcript_segments
+```
+
+## The pipeline CLI
+
+```bash
+python run_pipeline.py                              # full run — all 9 phases
+python run_pipeline.py --hours 48                   # override the 144h default lookback
+python run_pipeline.py --dry-run                    # scrape + validate ONLY, write nothing
+python run_pipeline.py --skip-scraping              # re-process what's already in the DB
+python run_pipeline.py --skip-digest                # scrape/embed, but no enrichment or email
+python run_pipeline.py --skip-email                 # build the digest, print it instead of sending
+python run_pipeline.py --skip-scraping --skip-email  # fastest full re-process loop
+
+# --source accepts 'all', 'blogs', 'youtube', or ANY active Source Registry key.
+# Pass an invalid value to have the current valid keys printed back at you.
+python run_pipeline.py --source youtube --skip-digest
+python run_pipeline.py --source blogs
+python run_pipeline.py --source arxiv
+python run_pipeline.py --source reddit
+python run_pipeline.py --source github_release
+python run_pipeline.py --source government_us
+python run_pipeline.py --source government_uk
+python run_pipeline.py --source government_nist
+python run_pipeline.py --source funding_crunchbase
+python run_pipeline.py --source huggingface_model
+python run_pipeline.py --help
+```
+
+Exit code **1** means at least one error was recorded (scraper, DB insert,
+digest, scoring, or RAG indexing) — that's the alerting hook.
+
+## Celery — workers, beat, and one-off dispatch
+
+```bash
+# ALWAYS `python -m celery`, never bare `celery`, ALWAYS from the repo root.
+# --pool=solo because Celery's prefork pool misbehaves on Windows.
+
+# Default queue (the 6-hourly pipeline, ranking, affinities, profile vectors, trends)
+python -m celery -A app.celery_app:celery_app worker --pool=solo --loglevel=info
+
+# Interactive queue (semantic search, RAG chat, add-a-source)
+python -m celery -A app.celery_app:celery_app worker --pool=solo --loglevel=info -Q interactive -n interactive-worker@%h
+
+# STT queue (caption-less video transcription)
+python -m celery -A app.celery_app:celery_app worker --pool=solo --loglevel=info -Q stt -n stt-worker@%h
+
+# Beat (the scheduler — publishes, never executes)
+python -m celery -A app.celery_app:celery_app beat --loglevel=info
+
+# Inspection
+python -c "from app.celery_app import celery_app; print(celery_app.control.ping(timeout=2.0))"
+python -m celery -A app.celery_app:celery_app inspect active
+python -m celery -A app.celery_app:celery_app inspect registered
+python -m celery -A app.celery_app:celery_app inspect scheduled
+python -m celery -A app.celery_app:celery_app purge          # DESTRUCTIVE: drop all queued messages
+```
+
+### Trigger any task by hand
+
+`.run()` executes **inline in the current process** (no worker needed).
+`.delay()` dispatches **through Redis** (needs a worker on the right queue).
+
+```bash
+# Health round-trip
+python -c "from app.tasks.health_tasks import ping_task; print(ping_task.delay('hi').get(timeout=10))"
+
+# Whole pipeline
+python -c "from app.tasks.pipeline_tasks import run_full_pipeline_task; print(run_full_pipeline_task.run())"
+
+# Individual phases
+python -c "from app.tasks.pipeline_tasks import scrape_task;       print(scrape_task.run('all', 144))"
+python -c "from app.tasks.pipeline_tasks import stt_dispatch_task; print(stt_dispatch_task.run())"
+python -c "from app.tasks.pipeline_tasks import embed_task;        print(embed_task.run())"
+python -c "from app.tasks.pipeline_tasks import digest_task;       print(digest_task.run(144, True))"   # skip_email=True
+python -c "from app.tasks.pipeline_tasks import deep_video_task;   print(deep_video_task.run())"
+python -c "from app.tasks.pipeline_tasks import rag_index_task;    print(rag_index_task.run())"
+python -c "from app.tasks.pipeline_tasks import cluster_task;      print(cluster_task.run())"
+python -c "from app.tasks.pipeline_tasks import score_task;        print(score_task.run())"
+python -c "from app.tasks.pipeline_tasks import trend_task;        print(trend_task.run())"
+
+# Personalization
+python -c "from app.tasks.ranking_tasks import rank_all_users_task;              print(rank_all_users_task.run())"
+python -c "from app.tasks.affinity_tasks import aggregate_affinities_task;       print(aggregate_affinities_task.run())"
+python -c "from app.tasks.profile_vector_tasks import compute_profile_vectors_task; print(compute_profile_vectors_task.run())"
+
+# Sources & trends
+python -c "from app.tasks.source_revalidation_tasks import revalidate_user_sources_task; print(revalidate_user_sources_task.run())"
+python -c "from app.tasks.trend_tasks import generate_weekly_trend_report_task;  print(generate_weekly_trend_report_task.run())"
+
+# STT for one specific video (by youtube_videos.id)
+python -c "from app.tasks.stt_tasks import transcribe_video_task; print(transcribe_video_task.run(content_id=123))"
+```
+
+## Smoke-test the AI components directly (no Celery, no web server)
+
+```bash
+# Embedding model — should print 384
+python -c "from app.embeddings.embedding_service import embed_text; print(len(embed_text('test query')))"
+
+# RAG chunker — passages from a string
+python -c "from app.rag.chunker import chunk_article; ps=chunk_article('Sentence one. '*200); print(len(ps), ps[0].token_count, ps[0].char_start, ps[0].char_end)"
+
+# Full RAG answer end-to-end (needs GROQ_API_KEY + an indexed corpus)
+python -c "from app.database import get_db_session; from app.services.rag_service import answer_question; \
+import json; \
+db_ctx=get_db_session(); db=db_ctx.__enter__(); \
+print(json.dumps(answer_question(db, 'What is new in AI agents?'), indent=2)[:2000])"
+
+# Retrieval only (no generation, no Groq key needed)
+python -c "from app.database import get_db_session; from app.services.rag_service import retrieve_context; \
+db_ctx=get_db_session(); db=db_ctx.__enter__(); \
+r=retrieve_context(db, 'AI regulation'); print(r.mode, r.has_results, list(r.handle_to_citation))"
+
+# Enrichment on a made-up article (1 real LLM call)
+python -c "from app.agents.enrichment_agent import EnrichmentAgent; \
+a=EnrichmentAgent(allowed_topics={'llms','ai-agents'}); \
+print(a.generate('OpenAI ships a new model', 'OpenAI today announced a new frontier model with native tool use. '*20))"
+
+# Relevance gate against any feed URL
+python -c "from app.database import get_db_session; from app.services.relevance_gate import evaluate_source; \
+db_ctx=get_db_session(); db=db_ctx.__enter__(); \
+r=evaluate_source('https://news.crunchbase.com/sections/ai/feed/', db); print(r.decision, round(r.score,3), r.message)"
+
+# Ranking evaluation (NDCG@10 + MAP) for every user with a stored ranking
+python -c "from app.database import get_db_session; from app.eval.ranking_eval import evaluate_all_users; \
+db_ctx=get_db_session(); db=db_ctx.__enter__(); print(evaluate_all_users(db))"
+```
+
+## Django
+
+```bash
+cd web
+
+.venv/Scripts/python.exe manage.py runserver 127.0.0.1:8000
+.venv/Scripts/python.exe manage.py check
+.venv/Scripts/python.exe manage.py migrate
+.venv/Scripts/python.exe manage.py makemigrations
+.venv/Scripts/python.exe manage.py makemigrations --check --dry-run   # CI drift check
+.venv/Scripts/python.exe manage.py sqlmigrate onboarding 0005          # preview SQL
+.venv/Scripts/python.exe manage.py createsuperuser
+.venv/Scripts/python.exe manage.py shell
+.venv/Scripts/python.exe manage.py dbshell                              # needs a local psql
+.venv/Scripts/python.exe manage.py prune_old_events                     # manual retention prune
+.venv/Scripts/python.exe manage.py collectstatic                        # PRODUCTION ONLY
+
+cd ..
+```
+
+## Frontend
+
+```bash
+cd frontend
+
+npm install
+npm run dev            # http://localhost:3000 — proxies API paths to :8000
+npm run build          # next build + copies static/public into .next/standalone
+npm run start          # serve the standalone production build
+npm run lint
+
+cd ..
+```
+
+## Alembic (pipeline migrations only — never Django tables)
+
+```bash
+alembic current                                          # what revision is this DB on
+alembic history                                          # full revision chain
+alembic check                                            # verify zero model/schema drift
+alembic revision --autogenerate -m "add some_column"     # ALWAYS review the generated file
+alembic upgrade head
+alembic downgrade -1
+alembic stamp head                                       # baseline an existing DB, no DDL
+```
+
+> If a new migration adds the **first** pgvector `Vector` column in that file,
+> add `import pgvector.sqlalchemy` by hand — autogenerate does not emit it.
+
+## Database exploration
+
+```bash
+# psql inside the container (no local psql needed)
+docker exec -it ai_news_db psql -U ai_news_user -d ai_news
+
+# One-off queries from the shell
+docker exec ai_news_db psql -U ai_news_user -d ai_news -c "SELECT count(*) FROM articles;"
+docker exec ai_news_db psql -U ai_news_user -d ai_news -c "SELECT count(*) FROM embeddings;"
+docker exec ai_news_db psql -U ai_news_user -d ai_news -c "SELECT count(*) FROM rag_chunks;"
+docker exec ai_news_db psql -U ai_news_user -d ai_news -c "SELECT source, count(*) FROM articles GROUP BY source ORDER BY 2 DESC;"
+docker exec ai_news_db psql -U ai_news_user -d ai_news -c "SELECT count(*) FROM content_clusters;"
+docker exec ai_news_db psql -U ai_news_user -d ai_news -c "SELECT status, count(*) FROM stt_jobs GROUP BY status;"
+
+# Backup / restore
+docker exec ai_news_db pg_dump -U ai_news_user -d ai_news -Fc > backup.dump
+docker exec -i ai_news_db pg_restore -U ai_news_user -d ai_news --clean < backup.dump
+```
+
+Useful health queries:
+
+```sql
+-- Is the corpus enriched?
+SELECT (SELECT count(*) FROM articles) AS articles,
+       (SELECT count(*) FROM content_enrichment WHERE content_type='article') AS enriched,
+       (SELECT count(*) FROM embeddings) AS embeddings,
+       (SELECT count(*) FROM rag_chunks) AS rag_passages;
+
+-- Source Registry health
+SELECT key, is_active, visibility, last_run_at, last_success_at FROM sources ORDER BY key;
+
+-- Clusters with 2+ members (the ones that actually exist — singletons are discarded)
+SELECT cluster_id, count(*) FROM content_cluster_members GROUP BY cluster_id ORDER BY 2 DESC LIMIT 10;
+
+-- What's trending right now
+SELECT dimension, key, mention_count, round(z_score::numeric,2) AS z
+FROM trends WHERE date = (SELECT max(date) FROM trends) AND is_trending ORDER BY z_score DESC;
+
+-- One user's ranking, with the winning explanation
+SELECT rank, content_type, content_id, relevance_score, reasoning
+FROM user_rankings WHERE user_id = 1 ORDER BY rank;
+
+-- Chat activity
+SELECT c.id, c.scope_type, count(m.id) AS msgs, max(m.created_at) AS last
+FROM chat_conversations c LEFT JOIN chat_messages m ON m.conversation_id = c.id
+GROUP BY c.id ORDER BY last DESC NULLS LAST LIMIT 10;
+```
+
+## Tests
+
+```bash
+pytest                                                  # full suite
+pytest -v
+pytest tests/test_database.py -v                        # in-memory SQLite, no Postgres needed
+pytest tests/test_feed_ranking.py -v                    # pure-function home diversification
+pytest tests/test_scrapers.py -v                        # ⚠ makes REAL network calls
+pytest -k "ranking"                                     # filter by keyword
+pytest tests/ --cov=app --cov-report=term-missing
+```
+
+> Known baseline: **14 passed, 22 pre-existing errors.** The errors are the
+> SQLite/JSONB/Vector incompatibility in `test_database.py` — SQLite can't
+> create the pgvector and JSONB columns. Any *other* failure count is a real
+> regression.
+
+## API smoke tests (curl)
+
+```bash
+curl -s http://127.0.0.1:8000/healthz/                                  # {"status":"ok"}
+curl -s "http://127.0.0.1:8000/api/news/home/?limit=5" | head -c 500
+curl -s "http://127.0.0.1:8000/api/news/search/?q=agents" | head -c 500
+curl -s "http://127.0.0.1:8000/api/news/clusters/?hours=168" | head -c 500
+
+# Authenticated endpoints need a session cookie + CSRF token — easiest from the
+# browser devtools console on http://localhost:3000, or:
+curl -s -c cookies.txt http://127.0.0.1:8000/api/session/
+```
+
+## Restarting after code changes
+
+```bash
+# Celery workers do NOT hot-reload. After editing anything under app/ that a
+# task imports, Ctrl+C the worker and start it again — a running worker keeps
+# executing the OLD code silently.
+
+# Django runserver DOES auto-reload, EXCEPT for brand-new templatetags modules
+# (restart it manually in that case).
+
+# Next.js dev server hot-reloads.
+```
+
+---

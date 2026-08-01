@@ -201,6 +201,17 @@ class HomeFeedAPIView(View):
         combined = list(articles[:candidate_limit + 1]) + list(videos[:candidate_limit + 1])
         combined.sort(key=lambda item: item.published_at, reverse=True)
         has_more = len(combined) > limit
+        # Captured BEFORE diversify_home_items reorders the page — it promotes
+        # older items ahead of fresher ones to avoid one source dominating, so
+        # the array's last element is no longer reliably the oldest item on
+        # the page. Using it as the pagination cursor let already-shown items
+        # (older than the true minimum but positioned earlier by diversify)
+        # get re-fetched on the next page, causing duplicate React keys on the
+        # frontend (e.g. the same article appearing on two pages). This is the
+        # true oldest published_at among the items actually returned, so the
+        # `before` cursor on the next request can never overlap this page.
+        page_window = combined[:limit]
+        next_cursor = page_window[-1].published_at.isoformat() if page_window else None
         combined = diversify_home_items(combined, limit, quality_scores=_quality_scores_for_items(combined))
 
         attach_saved_state(request.user, combined)
@@ -227,6 +238,7 @@ class HomeFeedAPIView(View):
         return JsonResponse({
             "items": serialize_list(combined),
             "hasMore": has_more,
+            "nextCursor": next_cursor,
             "featured": serialize_list(featured_candidates),
             "trending": _serialize_trending(),
             "hotClusters": _serialize_hot_clusters(request.user),

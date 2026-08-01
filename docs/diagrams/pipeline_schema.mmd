@@ -1,0 +1,73 @@
+erDiagram
+    SOURCES ||--o{ ARTICLES : "scraped from"
+    SOURCES ||--o{ YOUTUBE_VIDEOS : "scraped from"
+    ARTICLES ||--o| CONTENT_ENRICHMENT : "enriched into"
+    YOUTUBE_VIDEOS ||--o| CONTENT_ENRICHMENT : "enriched into"
+    ARTICLES ||--o| EMBEDDINGS : "embedded into"
+    YOUTUBE_VIDEOS ||--o| EMBEDDINGS : "embedded into"
+    CONTENT_ENRICHMENT }o--o{ TAXONOMY_TOPICS : "via content_topics"
+    CONTENT_ENRICHMENT }o--o{ ENTITIES : "via content_entities"
+    ARTICLES }o--o{ CONTENT_CLUSTERS : "via cluster_members"
+    ARTICLES ||--o| CONTENT_SCORES : "scored"
+    ENTITIES ||--o| PERSON_ENTITIES : "if type=person"
+    YOUTUBE_VIDEOS ||--o{ CONTENT_CHUNKS : "chunked for RAG (M14)"
+    YOUTUBE_VIDEOS ||--o{ STT_JOBS : "transcription tracked by"
+
+    SOURCES {
+        bigint id PK
+        string key UK
+        string category
+        string visibility "global or user"
+        string feed_url UK "user-submitted dedupe key"
+        string validation_status "AI-relevance gate outcome"
+    }
+    ARTICLES {
+        bigint id PK
+        string url UK
+        string source FK "-> sources.key"
+        text content
+        text summary
+    }
+    YOUTUBE_VIDEOS {
+        bigint id PK
+        string video_id UK
+        string channel_id
+        text content "transcript"
+        int duration_seconds
+    }
+    EMBEDDINGS {
+        bigint id PK
+        string content_type
+        bigint content_id
+        vector embedding "384-dim, pgvector"
+    }
+    CONTENT_ENRICHMENT {
+        bigint id PK
+        string content_type
+        bigint content_id
+        string content_category
+        int technical_depth "1-5"
+        text why_it_matters
+    }
+    TAXONOMY_TOPICS {
+        int id PK
+        string slug UK
+    }
+    ENTITIES {
+        bigint id PK
+        string name
+        string entity_type "company/model/person/technology"
+    }
+    CONTENT_SCORES {
+        bigint id PK
+        float score
+        string score_version
+    }
+    TRENDS {
+        bigint id PK
+        string dimension "topic or entity"
+        string key
+        date date
+        float z_score
+        bool is_trending
+    }

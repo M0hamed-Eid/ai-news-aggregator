@@ -35,6 +35,14 @@ interface HotCluster {
 interface HomeFeedResponse {
   items: ContentItem[];
   hasMore: boolean;
+  // Explicit "true oldest item on this page" cursor computed server-side,
+  // BEFORE the diversity re-ranking reorders items — see HomeFeedAPIView.
+  // Deriving this from items[items.length - 1] instead (the naive approach)
+  // breaks once diversification promotes an older item ahead of a fresher
+  // one: the array's last element stops being the true oldest, so the next
+  // page's `before` cursor can overlap this page and re-fetch an item
+  // already shown, producing duplicate React keys.
+  nextCursor: string | null;
   featured: ContentItem[];
   trending: TrendingTopic[];
   hotClusters: HotCluster[];
@@ -54,7 +62,7 @@ export default function HomePage() {
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => {
       if (!lastPage.hasMore || lastPage.items.length === 0) return undefined;
-      return lastPage.items[lastPage.items.length - 1].publishedAt;
+      return lastPage.nextCursor ?? undefined;
     },
   });
 

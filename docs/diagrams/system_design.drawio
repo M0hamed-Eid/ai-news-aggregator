@@ -1,0 +1,112 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="System Design" id="system-design-1">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1080" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ===================== GROUP: External Sources ===================== -->
+        <mxCell id="grpSources" value="External Sources" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;verticalAlign=top;align=left;spacingLeft=10;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="420" y="40" width="740" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="srcRSS" value="RSS / Atom feeds&#10;(arXiv, GitHub, Reddit, gov, funding, OpenAI blog)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="450" y="80" width="220" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="srcYT" value="YouTube&#10;(RSS + transcript API)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="690" y="80" width="220" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="srcAnthropic" value="Anthropic Blog&#10;(headless Playwright)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="930" y="80" width="220" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== GROUP: Pipeline (app/) ===================== -->
+        <mxCell id="grpPipeline" value="app/ &#8212; SQLAlchemy pipeline (own Python env, 3.14)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;verticalAlign=top;align=left;spacingLeft=10;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="180" y="220" width="1220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="pplScrapers" value="Scrapers&#10;(adapter per source)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="210" y="260" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="pplEnrich" value="EnrichmentAgent&#10;(Groq / Ollama, 1 call/item)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="430" y="260" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="pplEmbed" value="Embedding&#10;(sentence-transformers, local)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="650" y="260" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="pplRank" value="RankingService&#10;(deterministic, no LLM)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="870" y="260" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="pplSTT" value="STT worker&#10;(faster-whisper, CPU)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="260" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== GROUP: Shared Infrastructure ===================== -->
+        <mxCell id="grpInfra" value="Shared Infrastructure" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;verticalAlign=top;align=left;spacingLeft=10;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="500" y="400" width="580" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="infraPG" value="PostgreSQL + pgvector&#10;(single source of truth)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;shape=cylinder3;boundedLbl=1;" vertex="1" parent="1">
+          <mxGeometry x="530" y="440" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="infraRedis" value="Redis&#10;(Celery broker + Django cache)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;shape=cylinder3;boundedLbl=1;" vertex="1" parent="1">
+          <mxGeometry x="820" y="440" width="220" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== GROUP: Web (Django) ===================== -->
+        <mxCell id="grpWeb" value="web/ &#8212; Django (own Python env, 3.13)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;verticalAlign=top;align=left;spacingLeft=10;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="420" y="580" width="740" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="webAPI" value="JSON API" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="450" y="620" width="220" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="webAuth" value="Auth / Billing (Stripe) / Admin" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="690" y="620" width="220" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="webChat" value="Chat ASGI process&#10;(uvicorn, SSE streaming)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="930" y="620" width="220" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== GROUP: Frontend + Delivery ===================== -->
+        <mxCell id="grpClient" value="Frontend + Delivery" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;verticalAlign=top;align=left;spacingLeft=10;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="500" y="760" width="580" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="clientNext" value="Next.js frontend&#10;(React 19, owns all UI)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="530" y="800" width="220" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="clientEmail" value="Digest email&#10;(sent directly by the pipeline)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="800" y="800" width="220" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== User ===================== -->
+        <mxCell id="user" value="User" style="ellipse;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="720" y="940" width="160" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== EDGES ===================== -->
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="srcRSS" target="pplScrapers"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="srcYT" target="pplScrapers"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="srcAnthropic" target="pplScrapers"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e4" value="scraped items" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="pplScrapers" target="pplEnrich"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e5" value="enriched" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="pplEnrich" target="pplEmbed"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="pplScrapers" target="infraPG"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="pplEnrich" target="infraPG"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="pplEmbed" target="infraPG"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="pplSTT" target="infraPG"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e10" value="reads shared pool" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="infraPG" target="pplRank"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e11" value="writes user_rankings" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="pplRank" target="infraPG"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="pplRank" target="clientEmail"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e13" value="Celery tasks" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;fontSize=10;" edge="1" parent="1" source="grpPipeline" target="infraRedis"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e14" value="cache + interactive queue" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;fontSize=10;" edge="1" parent="1" source="grpWeb" target="infraRedis"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="infraPG" target="webAPI"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="webAPI" target="clientNext"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="webAuth" target="clientNext"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e18" value="SSE stream" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="webChat" target="clientNext"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e19" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="clientNext" target="user"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="clientEmail" target="user"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

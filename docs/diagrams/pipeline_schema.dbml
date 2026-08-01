@@ -1,0 +1,115 @@
+// Pipeline schema (SQLAlchemy, app/database/models/) — paste this whole file
+// into https://dbdiagram.io (or File > Import > DBML) to get an interactive,
+// presentation-ready diagram with zero local tooling.
+
+Table sources {
+  id bigint [pk]
+  key varchar [unique]
+  category varchar
+  visibility varchar [note: "global or user"]
+  feed_url varchar [unique, note: "user-submitted dedupe key"]
+  validation_status varchar [note: "AI-relevance gate outcome"]
+}
+
+Table articles {
+  id bigint [pk]
+  url varchar [unique]
+  source varchar [ref: > sources.key]
+  content text
+  summary text
+}
+
+Table youtube_videos {
+  id bigint [pk]
+  video_id varchar [unique]
+  channel_id varchar [ref: > sources.key]
+  content text [note: "transcript"]
+  duration_seconds int
+}
+
+Table embeddings {
+  id bigint [pk]
+  content_type varchar
+  content_id bigint
+  embedding vector [note: "384-dim, pgvector"]
+}
+
+Table content_enrichment {
+  id bigint [pk]
+  content_type varchar
+  content_id bigint
+  content_category varchar
+  technical_depth int [note: "1-5"]
+  why_it_matters text
+}
+
+Table taxonomy_topics {
+  id int [pk]
+  slug varchar [unique]
+}
+
+Table content_topics {
+  content_type varchar
+  content_id bigint
+  taxonomy_topic_id int [ref: > taxonomy_topics.id]
+}
+
+Table entities {
+  id bigint [pk]
+  name varchar
+  entity_type varchar [note: "company/model/person/technology"]
+}
+
+Table content_entities {
+  content_type varchar
+  content_id bigint
+  entity_id bigint [ref: > entities.id]
+}
+
+Table person_entities {
+  id bigint [pk]
+  entity_id bigint [ref: > entities.id]
+  footprint_source_key varchar
+}
+
+Table content_clusters {
+  id bigint [pk]
+  created_at timestamp
+}
+
+Table content_cluster_members {
+  cluster_id bigint [ref: > content_clusters.id]
+  content_type varchar
+  content_id bigint
+}
+
+Table content_scores {
+  id bigint [pk]
+  content_type varchar
+  content_id bigint
+  score float
+  score_version varchar
+}
+
+Table trends {
+  id bigint [pk]
+  dimension varchar [note: "topic or entity"]
+  key varchar
+  date date
+  z_score float
+  is_trending bool
+}
+
+Table content_chunks {
+  id bigint [pk]
+  content_type varchar
+  content_id bigint [ref: > youtube_videos.id]
+  chunk_index int
+  embedding vector [note: "passage-level, M14 RAG"]
+}
+
+Table stt_jobs {
+  id bigint [pk]
+  content_id bigint [ref: > youtube_videos.id]
+  status varchar
+}

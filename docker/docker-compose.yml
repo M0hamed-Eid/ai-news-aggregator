@@ -93,13 +93,26 @@ services:
       dockerfile: Dockerfile
     container_name: ai_news_worker_default
     restart: unless-stopped
+    # Secrets (GROQ_API_KEY, GMAIL_*) live in the PROJECT ROOT .env — the same
+    # file run_pipeline.py's load_dotenv() reads — so there is one source of
+    # truth instead of a second copy in docker/.env. Compose's own ${VAR}
+    # interpolation only ever reads docker/.env (the file beside this one), so
+    # without this line every credential resolved to "" and scheduled digests
+    # were built then discarded ("Email credentials not configured").
+    # IMPORTANT: do NOT also redeclare GROQ_API_KEY/GMAIL_* below in
+    # environment: — Compose always lets an environment: key win over the
+    # SAME key from env_file, even when environment: interpolates to "".
+    # That silently overwrote env_file's real values the first time this was
+    # tried (still empty in the container after the fix "worked"). The
+    # environment: block below is only for values that must genuinely differ
+    # from the root .env — DATABASE_URL/REDIS_URL point at the compose
+    # network (db:5432, redis:6379), not the host values root .env carries.
+    env_file:
+      - ../.env
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-ai_news_user}:${POSTGRES_PASSWORD:-changeme_in_production}@db:5432/${POSTGRES_DB:-ai_news}
       REDIS_URL: redis://redis:6379/0
       DJANGO_BASE_URL: ${DJANGO_BASE_URL:-http://host.docker.internal:8000}
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
-      GMAIL_ADDRESS: ${GMAIL_ADDRESS:-}
-      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
       HOURS_LOOKBACK: ${HOURS_LOOKBACK:-144}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LLM_PROVIDER: ${LLM_PROVIDER:-groq}
@@ -127,6 +140,9 @@ services:
     container_name: ai_news_worker_stt
     restart: unless-stopped
     command: ["uv", "run", "celery", "-A", "app.celery_app:celery_app", "worker", "--pool=solo", "--loglevel=info", "-Q", "stt", "-n", "stt-worker@%h"]
+    # See worker-default above for why the root .env is the credential source.
+    env_file:
+      - ../.env
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-ai_news_user}:${POSTGRES_PASSWORD:-changeme_in_production}@db:5432/${POSTGRES_DB:-ai_news}
       REDIS_URL: redis://redis:6379/0
@@ -154,12 +170,12 @@ services:
     container_name: ai_news_beat
     restart: unless-stopped
     command: ["uv", "run", "celery", "-A", "app.celery_app:celery_app", "beat", "--loglevel=info"]
+    # See worker-default above for why the root .env is the credential source.
+    env_file:
+      - ../.env
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-ai_news_user}:${POSTGRES_PASSWORD:-changeme_in_production}@db:5432/${POSTGRES_DB:-ai_news}
       REDIS_URL: redis://redis:6379/0
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
-      GMAIL_ADDRESS: ${GMAIL_ADDRESS:-}
-      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
       HOURS_LOOKBACK: ${HOURS_LOOKBACK:-144}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LLM_PROVIDER: ${LLM_PROVIDER:-groq}

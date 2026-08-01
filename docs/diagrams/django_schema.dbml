@@ -1,0 +1,91 @@
+// Django schema (web/apps/*/models.py) — paste this whole file into
+// https://dbdiagram.io (or File > Import > DBML) to get an interactive,
+// presentation-ready diagram with zero local tooling.
+
+Table users {
+  id bigint [pk]
+  email varchar [unique]
+  plan varchar [note: "free or pro"]
+  plan_expires_at datetime
+  email_verified bool
+}
+
+Table user_profiles {
+  id bigint [pk]
+  user_id bigint [ref: - users.id]
+  persona_id bigint [ref: > personas.id]
+  onboarding_completed bool
+}
+
+Table personas {
+  id int [pk]
+  slug varchar [unique]
+  name varchar
+}
+
+Table user_digest_settings {
+  id bigint [pk]
+  profile_id bigint [ref: - user_profiles.id]
+  frequency varchar
+  expertise_level varchar
+  format_balance varchar
+}
+
+Table interests {
+  id int [pk]
+  slug varchar [unique]
+  taxonomy_topic_id int [note: "FK into pipeline's taxonomy_topics, db_constraint=False"]
+}
+
+Table user_interests {
+  id bigint [pk]
+  profile_id bigint [ref: > user_profiles.id]
+  interest_id int [ref: > interests.id]
+  weight float
+}
+
+Table user_exclusions {
+  id bigint [pk]
+  profile_id bigint [ref: > user_profiles.id]
+  kind varchar [note: "category or source"]
+  value varchar
+}
+
+Table user_source_subscriptions {
+  id bigint [pk]
+  profile_id bigint [ref: > user_profiles.id]
+  source_id bigint [note: "FK into pipeline's sources table, db_constraint=False"]
+}
+
+Table user_follows {
+  id bigint [pk]
+  user_id bigint [ref: > users.id]
+  target_type varchar [note: "entity/topic/source"]
+  target_id bigint
+}
+
+Table user_events {
+  id bigint [pk]
+  user_id bigint [ref: > users.id]
+  event_type varchar [note: "impression/click/dwell/save/hide/search"]
+  content_type varchar
+  content_id bigint
+  created_at datetime
+}
+
+Table saved_items {
+  id bigint [pk]
+  user_id bigint [ref: > users.id]
+  content_type varchar
+  content_id bigint
+  is_saved bool
+  is_read bool
+  is_hidden bool
+}
+
+Table stripe_customers {
+  id bigint [pk]
+  user_id bigint [ref: - users.id]
+  stripe_customer_id varchar
+  subscription_status varchar
+}

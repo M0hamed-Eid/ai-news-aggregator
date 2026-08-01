@@ -1,0 +1,49 @@
+erDiagram
+    USERS ||--|| USER_PROFILES : "has"
+    USER_PROFILES ||--|| USER_DIGEST_SETTINGS : "has"
+    USER_PROFILES }o--|| PERSONAS : "chose"
+    USER_PROFILES ||--o{ USER_INTERESTS : "selected"
+    INTERESTS ||--o{ USER_INTERESTS : "selected by"
+    USER_PROFILES ||--o{ USER_EXCLUSIONS : "opted out of"
+    USER_PROFILES ||--o{ USER_SOURCE_SUBSCRIPTIONS : "subscribed to"
+    USERS ||--o{ USER_FOLLOWS : "follows entity/topic/source"
+    USERS ||--o{ USER_EVENTS : "generated"
+    USERS ||--o{ SAVED_ITEMS : "saved"
+    USERS ||--o| STRIPE_CUSTOMERS : "billed via"
+
+    USERS {
+        bigint id PK
+        string email UK
+        string plan "free or pro"
+        datetime plan_expires_at
+        bool email_verified
+    }
+    USER_PROFILES {
+        bigint id PK
+        bigint user_id FK
+        bigint persona_id FK
+        bool onboarding_completed
+    }
+    USER_DIGEST_SETTINGS {
+        bigint id PK
+        string frequency
+        string expertise_level
+        string format_balance
+    }
+    USER_EVENTS {
+        bigint id PK
+        string event_type "impression/click/dwell/save/hide/search"
+        string content_type
+        bigint content_id
+        datetime created_at
+    }
+    SAVED_ITEMS {
+        bigint id PK
+        bool is_saved
+        bool is_read
+        bool is_hidden
+    }
+    USER_SOURCE_SUBSCRIPTIONS {
+        bigint id PK
+        bigint source_id "FK into pipeline's sources table, db_constraint=False"
+    }

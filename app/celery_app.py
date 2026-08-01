@@ -54,6 +54,17 @@ celery_app = Celery(
 celery_app.conf.timezone = "UTC"
 celery_app.conf.enable_utc = True
 
+# Redis's broker default visibility_timeout is 3600s (1 hour): if a task is not
+# acked within that window, Redis assumes the worker died and re-delivers the
+# task to another consumer. run_full_pipeline_task legitimately takes ~88
+# minutes (scrape + enrich + cluster + score + trends + RAG index over the whole
+# corpus), so it blew past the default EVERY run and got redelivered — observed
+# live as the SAME task id succeeding four times in one morning, i.e. the
+# pipeline looping back-to-back around the clock instead of running every 6h.
+# 6 hours matches the beat interval below, so a run can never outlive its own
+# next scheduled dispatch.
+celery_app.conf.broker_transport_options = {"visibility_timeout": 6 * 60 * 60}
+
 # M9 — interactive/low-latency tasks (currently just query embedding for
 # semantic search) get their OWN queue, consumed by a SEPARATE worker
 # process from the default queue the 6-hourly pipeline run occupies for
