@@ -44,7 +44,7 @@ jobs:
           git add neon-backup-before-migration.dump neon-backup-info.txt
           git commit -m "Neon backup before migration $(date -u +%Y-%m-%dT%H:%M:%SZ)" || echo "nothing to commit"
           for i in 1 2 3 4 5; do
-            if git push; then
+            if git push origin HEAD:refs/heads/$GITHUB_REF_NAME; then
               exit 0
             fi
             echo "Push rejected (likely a concurrent commit from another workflow run) -- rebasing and retrying ($i/5)"
