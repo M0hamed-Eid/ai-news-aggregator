@@ -1,0 +1,17 @@
+Neon content sync — 2026-08-08T16:48:38Z
+
+table                          before      after   inserted
+entities                        21735      21735          0
+content_clusters                   11         11          0
+articles                        15515      15515          0
+youtube_videos                    197        197          0
+content_topics                  35569      35569          0
+content_cluster_members            16         16          0
+embeddings                      15696      15696          0
+content_enrichment              14668      14668          0
+content_scores                  15088      15088          0
+content_chunks                     77         77          0
+rag_chunks                          0      35301      35301
+stt_jobs                            0         38         38
+content_entities                 7645      35694      28049
+person_entities                     0          0          0
