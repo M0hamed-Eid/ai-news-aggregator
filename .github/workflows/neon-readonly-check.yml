@@ -104,8 +104,13 @@ jobs:
                    stt_jobs users user_profiles user_events user_interests user_exclusions \
                    user_source_subscriptions user_digest_settings saved_items user_follows \
                    user_rankings digest_log user_affinities terms_acceptances; do
-            result=$(psql "$DATABASE_URL" -t -c "SELECT count(*) FROM $t;" 2>&1)
-            if [ $? -eq 0 ]; then
+            # The assignment must happen INSIDE the if-condition itself, not
+            # on its own line with $? checked after -- GitHub Actions runs
+            # steps under `bash -e`, and a bare `result=$(failing_cmd)`
+            # statement trips errexit immediately, before the next line's
+            # `$?` check is ever reached (this silently killed the whole
+            # step on the first missing table in an earlier attempt).
+            if result=$(psql "$DATABASE_URL" -t -c "SELECT count(*) FROM $t;" 2>&1); then
               echo "$t: $(echo $result | xargs)" >> neon-reconciliation-result.txt
             else
               echo "$t: TABLE NOT FOUND / QUERY FAILED" >> neon-reconciliation-result.txt

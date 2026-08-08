@@ -47,6 +47,10 @@ jobs:
         run: |
           git config user.name "neon-backup-bot"
           git config user.email "actions@github.com"
-          git add neon-backup-before-migration.dump neon-backup-info.txt
+          # -f: *.dump is gitignored repo-wide (a rule for local scratch
+          # dumps, not this deliberate one-off backup artifact) -- without
+          # -f, `git add` silently no-ops on it and the commit has nothing
+          # to commit, which is exactly what broke the previous 3 attempts.
+          git add -f neon-backup-before-migration.dump neon-backup-info.txt
           git commit -m "Neon backup before migration $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           git push origin HEAD:refs/heads/neon-backup-result-${{ github.run_id }}
