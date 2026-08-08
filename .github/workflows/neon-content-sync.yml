@@ -316,8 +316,17 @@ jobs:
           report_row person_entities "$before"
           drop_staging person_entities
 
-          # 4) No content/entity reference at all — plain passthrough.
-          plain_merge trends
+          # 4) trends (251,750 local rows, ~240K candidate new rows) is
+          # deliberately NOT backfilled: Neon's storage sat at 0.52/0.5GB
+          # (already over the free-tier cap, mostly the previous failed
+          # run's orphaned staging.trends) with no realistic headroom for
+          # it, and the user chose to skip the historical backfill rather
+          # than pay for more storage -- trends are internal momentum/
+          # scoring stats feeding the weekly LLM trend report, not primary
+          # content, and Neon's own pipeline keeps computing fresh ones
+          # going forward regardless. trend_reports has 0 local rows today
+          # (trivial/no-op) and has no dependency on trends, so it still
+          # runs normally.
           plain_merge trend_reports
 
           # Drops the three anchor staging tables (entities, articles,
