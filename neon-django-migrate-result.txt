@@ -1,0 +1,123 @@
+Neon Django migration state — 2026-08-08T17:24:34Z
+
+=== Before ===
+accounts
+ [X] 0001_initial
+ [X] 0002_userprofile
+ [X] 0003_userprofile_persona_userprofile_user
+ [X] 0004_userprofile_bio
+ [X] 0005_user_plan_user_plan_expires_at
+ [X] 0006_user_email_verified
+ [X] 0007_stripecustomer
+ [ ] 0008_termsacceptance
+admin
+ [X] 0001_initial
+ [X] 0002_logentry_remove_auto_add
+ [X] 0003_logentry_add_action_flag_choices
+assistant
+ [ ] 0001_initial
+auth
+ [X] 0001_initial
+ [X] 0002_alter_permission_name_max_length
+ [X] 0003_alter_user_email_max_length
+ [X] 0004_alter_user_username_opts
+ [X] 0005_alter_user_last_login_null
+ [X] 0006_require_contenttypes_0002
+ [X] 0007_alter_validators_add_error_messages
+ [X] 0008_alter_user_username_max_length
+ [X] 0009_alter_user_last_name_max_length
+ [X] 0010_alter_group_name_max_length
+ [X] 0011_update_proxy_permissions
+ [X] 0012_alter_user_first_name_max_length
+behavior
+ [X] 0001_initial
+ [X] 0002_userfollow
+catalog
+ [X] 0001_initial
+ [X] 0002_digestlog_source_userranking
+ [X] 0003_digestclicktoken_useraffinity
+ [X] 0004_contentcluster_contentclustermember_and_more
+ [X] 0005_embedding
+ [X] 0006_personentity
+ [X] 0007_trend_trendreport
+ [X] 0008_contentchunk_sttjob
+ [ ] 0009_ragchunk
+contenttypes
+ [X] 0001_initial
+ [X] 0002_remove_content_type_name
+news
+ (no migrations)
+onboarding
+ [X] 0001_initial
+ [X] 0002_seed_lookups
+ [X] 0003_interest_taxonomy_topic
+ [X] 0004_link_taxonomy_topics
+ [X] 0005_userdigestsettings_format_balance_and_more
+ [X] 0006_usersourcesubscription
+sessions
+ [X] 0001_initial
+
+=== migrate output ===
+Operations to perform:
+  Apply all migrations: accounts, admin, assistant, auth, behavior, catalog, contenttypes, onboarding, sessions
+Running migrations:
+  Applying accounts.0008_termsacceptance... OK
+  Applying assistant.0001_initial... OK
+  Applying catalog.0009_ragchunk... OK
+
+=== After ===
+accounts
+ [X] 0001_initial
+ [X] 0002_userprofile
+ [X] 0003_userprofile_persona_userprofile_user
+ [X] 0004_userprofile_bio
+ [X] 0005_user_plan_user_plan_expires_at
+ [X] 0006_user_email_verified
+ [X] 0007_stripecustomer
+ [X] 0008_termsacceptance
+admin
+ [X] 0001_initial
+ [X] 0002_logentry_remove_auto_add
+ [X] 0003_logentry_add_action_flag_choices
+assistant
+ [X] 0001_initial
+auth
+ [X] 0001_initial
+ [X] 0002_alter_permission_name_max_length
+ [X] 0003_alter_user_email_max_length
+ [X] 0004_alter_user_username_opts
+ [X] 0005_alter_user_last_login_null
+ [X] 0006_require_contenttypes_0002
+ [X] 0007_alter_validators_add_error_messages
+ [X] 0008_alter_user_username_max_length
+ [X] 0009_alter_user_last_name_max_length
+ [X] 0010_alter_group_name_max_length
+ [X] 0011_update_proxy_permissions
+ [X] 0012_alter_user_first_name_max_length
+behavior
+ [X] 0001_initial
+ [X] 0002_userfollow
+catalog
+ [X] 0001_initial
+ [X] 0002_digestlog_source_userranking
+ [X] 0003_digestclicktoken_useraffinity
+ [X] 0004_contentcluster_contentclustermember_and_more
+ [X] 0005_embedding
+ [X] 0006_personentity
+ [X] 0007_trend_trendreport
+ [X] 0008_contentchunk_sttjob
+ [X] 0009_ragchunk
+contenttypes
+ [X] 0001_initial
+ [X] 0002_remove_content_type_name
+news
+ (no migrations)
+onboarding
+ [X] 0001_initial
+ [X] 0002_seed_lookups
+ [X] 0003_interest_taxonomy_topic
+ [X] 0004_link_taxonomy_topics
+ [X] 0005_userdigestsettings_format_balance_and_more
+ [X] 0006_usersourcesubscription
+sessions
+ [X] 0001_initial
