@@ -1,0 +1,4 @@
+Backup size:
+-rw-r--r-- 1 runner runner 10810227 Aug  8 15:53 neon-backup-before-migration.dump
+Table counts in backup (via pg_restore --list):
+44
