@@ -16,10 +16,19 @@ string); only this mechanical regex post-processing is copied. Keep the two
 in sync if either changes.
 """
 import logging
+import os
 import re
 
 from django.conf import settings
-from groq import Groq
+from groq import (
+    APIConnectionError,
+    APITimeoutError,
+    AuthenticationError,
+    Groq,
+    InternalServerError,
+    PermissionDeniedError,
+    RateLimitError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,27 +39,82 @@ _CITATION_RE = re.compile(r"\[S(\d+)\]")
 _SUGGESTIONS_RE = re.compile(r"\n?SUGGESTIONS:\s*(.+)\s*$", re.IGNORECASE | re.DOTALL)
 MAX_SUGGESTIONS = 3
 
+# Errors where a DIFFERENT key is worth trying — same set as
+# app/llm/groq_key_manager.py's _RETRYABLE_PER_KEY, deliberately
+# re-declared rather than imported: web/ and the pipeline (app/) are
+# separate deploy units with separate virtualenvs/dependency installs, no
+# shared import path between them (same reasoning as this file's own
+# existing citation/suggestion-parsing duplication, see module docstring
+# above — small deliberate duplicate, keep the two lists in sync).
+_RETRYABLE_PER_KEY = (
+    RateLimitError, APIConnectionError, APITimeoutError,
+    InternalServerError, AuthenticationError, PermissionDeniedError,
+)
+
+
+def _load_groq_keys() -> list:
+    """GROQ_API_KEY_1, GROQ_API_KEY_2, ... via Django settings (falling back
+    to os.environ so a key set only at the process level still works),
+    stopping at the first gap; falls back to the single settings.GROQ_API_KEY
+    if no numbered keys exist. Never logs a key value."""
+    keys = []
+    i = 1
+    while True:
+        key = getattr(settings, f"GROQ_API_KEY_{i}", "") or os.environ.get(f"GROQ_API_KEY_{i}", "")
+        if not key:
+            break
+        keys.append(key)
+        i += 1
+    if not keys and getattr(settings, "GROQ_API_KEY", ""):
+        keys.append(settings.GROQ_API_KEY)
+    return keys
+
 
 def is_configured() -> bool:
-    return bool(getattr(settings, "GROQ_API_KEY", ""))
+    return bool(_load_groq_keys())
 
 
 def stream_completion(system_prompt: str, question: str):
     """Yields raw text deltas as Groq produces them. Caller accumulates the
     full text and runs extract_suggestions()/resolve_citations() once the
     stream ends — never mid-stream, since a marker or the SUGGESTIONS
-    trailer can straddle a chunk boundary."""
-    client = Groq(api_key=settings.GROQ_API_KEY)
-    stream = client.chat.completions.create(
-        model=MODEL,
-        temperature=0.3,
-        max_tokens=MAX_TOKENS,
-        stream=True,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": question},
-        ],
-    )
+    trailer can straddle a chunk boundary.
+
+    Multi-key failover applies ONLY to opening the stream (the `.create()`
+    call itself) — once Groq has started sending real chunks to a caller,
+    switching keys mid-stream would mean silently re-sending/duplicating
+    output, which is worse than just failing. A failure once tokens have
+    already started is caught one level up by AssistantStreamView's own
+    try/except, which sends a clean SSE error frame instead of a broken
+    connection — that existing behavior is unchanged here."""
+    keys = _load_groq_keys()
+    if not keys:
+        raise RuntimeError("stream_completion called with no Groq key configured — check is_configured() first")
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": question},
+    ]
+
+    last_error = None
+    stream = None
+    for idx, key in enumerate(keys, start=1):
+        try:
+            client = Groq(api_key=key)
+            stream = client.chat.completions.create(
+                model=MODEL, temperature=0.3, max_tokens=MAX_TOKENS, stream=True, messages=messages,
+            )
+            break
+        except _RETRYABLE_PER_KEY as exc:
+            logger.warning(
+                "assistant streaming: key %d/%d failed to open (%s) — trying next key",
+                idx, len(keys), type(exc).__name__,
+            )
+            last_error = exc
+            continue
+    if stream is None:
+        raise last_error
+
     for chunk in stream:
         delta = chunk.choices[0].delta.content if chunk.choices else None
         if delta:

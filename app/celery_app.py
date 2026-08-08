@@ -132,9 +132,17 @@ celery_app.conf.beat_schedule = {
     # M11 — the only genuinely weekly, LLM-driven job in this milestone;
     # burst detection itself is LLM-free and rides the 6-hourly pipeline
     # chain instead (see run_pipeline.py's run_trend_computation_phase).
+    # Sunday 07:00 UTC = Sunday 10:00 Cairo time (currently EEST, UTC+3).
+    # NOTE: Egypt's DST offset changes twice a year (EEST/UTC+3 roughly
+    # Apr-Oct, EET/UTC+2 the rest of the year) and this crontab is a fixed
+    # UTC hour, so the real local trigger time drifts by an hour outside
+    # EEST season. Not auto-corrected — day_of_week=0 is Sunday (cron/Celery
+    # convention: 0 and 7 both mean Sunday, 1=Monday, matching the previous
+    # day_of_week=1 for Monday). See trend_tasks._week_bounds — the "which
+    # week to report on" math had to move in lockstep with this trigger day.
     "generate-weekly-trend-report": {
         "task": "app.tasks.trend_tasks.generate_weekly_trend_report_task",
-        "schedule": crontab(minute=0, hour=6, day_of_week=1),
+        "schedule": crontab(minute=0, hour=7, day_of_week=0),
     },
 }
 

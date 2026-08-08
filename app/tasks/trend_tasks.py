@@ -23,13 +23,20 @@ MAX_SOURCES_PER_TREND = 5
 
 
 def _week_bounds(today: date):
-    """The most recently COMPLETED Mon-Sun week as of `today` — this task
-    runs Monday morning, so "this week" (which just started) has no content
-    of its own yet; it reports on the week that just ended."""
-    this_monday = today - timedelta(days=today.weekday())
-    last_monday = this_monday - timedelta(days=7)
-    last_sunday = this_monday - timedelta(days=1)
-    return last_monday, last_sunday
+    """The most recently COMPLETED Mon-Sun week as of `today`.
+
+    Trigger-day-agnostic on purpose: this used to assume a Monday-morning
+    trigger (report on the week before `today`), which silently became
+    WRONG — one extra week stale — when the beat schedule moved to Sunday,
+    since a Sunday trigger's "current" week (Mon..today) has itself just
+    finished. Computing from the most recent Sunday on/before `today`
+    handles a Sunday trigger (that Sunday IS today, week already complete),
+    a Monday trigger (yesterday's Sunday, matching the old behavior exactly),
+    and any other day-of-week this ever gets rescheduled to again."""
+    days_since_sunday = (today.weekday() + 1) % 7  # Mon=1 ... Sat=6, Sun=0
+    most_recent_sunday = today - timedelta(days=days_since_sunday)
+    week_start = most_recent_sunday - timedelta(days=6)
+    return week_start, most_recent_sunday
 
 
 def _render_email_html(claims: list, week_start: date, week_end: date) -> str:

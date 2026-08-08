@@ -1,7 +1,8 @@
 from django.urls import path
 
 from .api_views import (
-    BillingAPIView, BillingPortalAPIView, CreateCheckoutSessionAPIView, LoginAPIView, LogoutAPIView,
+    AcceptTermsAPIView, BillingAPIView, BillingPortalAPIView, CreateCheckoutSessionAPIView,
+    DeleteAccountAPIView, LoginAPIView, LogoutAPIView,
     OpsAPIView, PasswordResetRequestAPIView, ProfileAPIView, ResendVerificationAPIView, SignupAPIView,
 )
 
@@ -18,4 +19,6 @@ urlpatterns = [
     path("password-reset/", PasswordResetRequestAPIView.as_view(), name="password_reset"),
     path("ops/", OpsAPIView.as_view(), name="ops"),
     path("verify/resend/", ResendVerificationAPIView.as_view(), name="resend_verification"),
+    path("terms/accept/", AcceptTermsAPIView.as_view(), name="accept_terms"),
+    path("delete/", DeleteAccountAPIView.as_view(), name="delete_account"),
 ]

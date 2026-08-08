@@ -100,3 +100,28 @@ class StripeCustomer(models.Model):
 
     def __str__(self):
         return f"StripeCustomer({self.user.email})"
+
+
+class TermsAcceptance(models.Model):
+    """
+    M16 — auditable record of which Terms/Privacy version a user accepted
+    and when. APPEND-ONLY like UserEvent (apps.behavior.models) — a new
+    acceptance is a new row, never an update, so the full history survives
+    a re-acceptance after a version bump (deliberately NOT one row per user
+    overwritten in place, matching the ask: "know which version a user
+    accepted", not just the latest). Intentionally minimal fields — no IP,
+    no user-agent, nothing beyond what's needed to answer "did user X
+    accept version Y, and when."
+    """
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="terms_acceptances")
+    terms_version = models.CharField(max_length=20)
+    privacy_policy_version = models.CharField(max_length=20)
+    accepted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "terms_acceptances"
+        indexes = [models.Index(fields=["user", "-accepted_at"], name="ix_terms_acceptance_user")]
+
+    def __str__(self):
+        return f"TermsAcceptance(user_id={self.user_id}, terms={self.terms_version}, at={self.accepted_at})"

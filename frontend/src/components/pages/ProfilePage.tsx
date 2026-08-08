@@ -13,6 +13,10 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { useAppStore } from '@/lib/store';
 import { api, ApiError } from '@/lib/api';
 import { toast } from 'sonner';
@@ -83,7 +87,7 @@ function formatSlugLabel(slug: string): string {
 }
 
 export default function ProfilePage() {
-  const { navigate, isLoggedIn, sessionLoading, setUser } = useAppStore();
+  const { navigate, isLoggedIn, sessionLoading, setUser, logout } = useAppStore();
 
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ['profile'],
@@ -110,6 +114,9 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [seeded, setSeeded] = useState(false);
   const [resending, setResending] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   // Once per successful fetch: replace the ENTIRE global user object with
   // the real one (setUser), and seed this page's local form state from the
@@ -165,6 +172,30 @@ export default function ProfilePage() {
       toast.error(err instanceof ApiError ? err.message : 'Failed to send verification email.');
     } finally {
       setResending(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    setDeleteError('');
+    if (!deletePassword) {
+      setDeleteError('Enter your password to confirm.');
+      return;
+    }
+    setDeleting(true);
+    try {
+      await api.post('/api/accounts/delete/', { password: deletePassword });
+      // No explicit navigate() here — logout() flips isLoggedIn to false,
+      // and this page's own existing auth-guard effect (above) already
+      // redirects to /login once that happens. A second navigate() call
+      // here would just race it.
+      logout();
+      toast.success('Your account has been deleted.');
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Failed to delete account.';
+      setDeleteError(message);
+      toast.error(message);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -400,6 +431,55 @@ export default function ProfilePage() {
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Save changes
             </Button>
+          </div>
+
+          {/* Danger zone — account deletion (M16). Requires re-entering the
+              current password even though this request is already
+              authenticated, matching the backend's own safety check
+              (DeleteAccountAPIView) against a stolen/idle session performing
+              an irreversible action. */}
+          <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-6">
+            <h3 className="mb-1 text-sm font-semibold text-destructive">Danger zone</h3>
+            <p className="mb-4 text-xs text-ink-muted">
+              Deleting your account permanently removes your profile, preferences, saved items, follows, and
+              activity history. Shared articles and videos in the catalog are not affected. This cannot be undone.
+            </p>
+            <AlertDialog onOpenChange={(open) => { if (!open) { setDeletePassword(''); setDeleteError(''); } }}>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive" size="sm">Delete account</Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete your account?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This permanently deletes your profile, preferences, saved items, hidden items, follows, and
+                    activity history. Shared articles and videos are never deleted. Enter your password to confirm.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <div className="space-y-1.5">
+                  <Label htmlFor="delete-password">Password</Label>
+                  <Input
+                    id="delete-password"
+                    type="password"
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    placeholder="••••••••"
+                  />
+                  {deleteError && <p className="text-xs text-destructive">{deleteError}</p>}
+                </div>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={(e) => { e.preventDefault(); handleDeleteAccount(); }}
+                    disabled={deleting}
+                    className="bg-destructive text-white hover:bg-destructive/90"
+                  >
+                    {deleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Delete my account
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </motion.div>
       </div>

@@ -96,7 +96,14 @@ def _strip_json_fences(text: str) -> str:
 class TrendNarrativeAgent:
 
     def __init__(self) -> None:
-        self._client, self.model = get_llm_client_and_model("simple")
+        # "reasoning" (70B-class), not "simple" (8B) — see client_factory.py's
+        # own docstring, which names this exact agent as the reason that tier
+        # exists. Using "simple" here was a real bug: a 6-claim grounded,
+        # cited JSON response is a harder structured-output task than the
+        # short single-item summaries "simple" is meant for, and it was
+        # producing truncated/malformed JSON that silently discarded every
+        # weekly report (see buglog trend-001).
+        self._client, self.model = get_llm_client_and_model("reasoning")
 
     def generate(
         self,
@@ -199,6 +206,13 @@ class TrendNarrativeAgent:
                 response = self._client.chat.completions.create(
                     model=self.model,
                     temperature=0.4,
+                    # Without an explicit cap, up to TOP_TRENDS_PER_REPORT (6)
+                    # headline+body+citation claims in one JSON response could
+                    # exceed the provider's default completion length and get
+                    # cut off mid-string — this is what silently killed every
+                    # weekly report attempt before it was raised here. ~250
+                    # generous tokens/claim x 6 + JSON overhead, rounded up.
+                    max_tokens=4096,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": "Write the weekly briefing now, following every rule exactly."},

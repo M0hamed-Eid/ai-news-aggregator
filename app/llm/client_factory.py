@@ -29,6 +29,8 @@ import os
 from groq import Groq
 from openai import OpenAI
 
+from app.llm.groq_key_manager import GroqKeyManager, load_groq_keys
+
 LOCAL_BASE_URL = "http://localhost:11434/v1"
 
 # Groq model per task, for every task EXCEPT "simple" (which has its own
@@ -52,7 +54,17 @@ def get_llm_client_and_model(task: str):
         model = os.getenv("LOCAL_SIMPLE_MODEL", "llama3.1:8b")
         return client, model
 
-    # Default path: Groq for everything, same as today
-    client = Groq(api_key=os.environ["GROQ_API_KEY"])
+    # Default path: Groq for everything, same as today. Uses GroqKeyManager
+    # (app/llm/groq_key_manager.py) whenever GROQ_API_KEY_1/_2/... are
+    # configured, transparently trying each in order on a rate-limit/quota/
+    # auth failure — every call site here already just does
+    # `self._client.chat.completions.create(...)`, which GroqKeyManager
+    # also exposes, so no agent needed to change. Falls back to a single
+    # plain Groq client (identical to before this existed) when only
+    # GROQ_API_KEY is set, so single-key deployments are unaffected.
     model = _GROQ_MODELS.get(task, "llama-3.1-8b-instant")
+    keys = load_groq_keys()
+    if len(keys) > 1:
+        return GroqKeyManager(keys), model
+    client = Groq(api_key=os.environ["GROQ_API_KEY"])
     return client, model

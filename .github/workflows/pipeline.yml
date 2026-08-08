@@ -28,8 +28,13 @@ on:
     - cron: "30 */3 * * *"
     # Monthly user-source revalidation (04:00 UTC on the 1st).
     - cron: "0 4 1 * *"
-    # Weekly trend report (06:00 UTC on Mondays).
-    - cron: "0 6 * * 1"
+    # Weekly trend report (07:00 UTC Sundays = 10:00 Cairo/EEST) — must
+    # match app/celery_app.py's beat_schedule exactly. Was "0 6 * * 1"
+    # (Monday 06:00 UTC) until the production-readiness audit found it had
+    # drifted out of sync with celery_app.py's own Sunday move (see that
+    # file's comment on Egypt's EEST/EET seasonal drift, which applies
+    # here identically since this is the same trigger time).
+    - cron: "0 7 * * 0"
   workflow_dispatch:
     inputs:
       job:
@@ -45,6 +50,13 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       REDIS_URL: ${{ secrets.REDIS_URL }}
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      # M16 — optional multi-key failover (app/llm/groq_key_manager.py).
+      # Blank repo secrets resolve to empty strings, which load_groq_keys()
+      # correctly treats as "not configured" and skips — safe to leave
+      # unset if you only have one key.
+      GROQ_API_KEY_1: ${{ secrets.GROQ_API_KEY_1 }}
+      GROQ_API_KEY_2: ${{ secrets.GROQ_API_KEY_2 }}
+      GROQ_API_KEY_3: ${{ secrets.GROQ_API_KEY_3 }}
       GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
       GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
     steps:
@@ -73,7 +85,7 @@ jobs:
               "15 3 * * *") echo "job=profile_vectors" >> "$GITHUB_OUTPUT" ;;
               "30 */3 * * *") echo "job=ranking" >> "$GITHUB_OUTPUT" ;;
               "0 4 1 * *") echo "job=source_revalidation" >> "$GITHUB_OUTPUT" ;;
-              "0 6 * * 1") echo "job=trend_report" >> "$GITHUB_OUTPUT" ;;
+              "0 7 * * 0") echo "job=trend_report" >> "$GITHUB_OUTPUT" ;;
               *) echo "job=full_pipeline" >> "$GITHUB_OUTPUT" ;;
             esac
           fi

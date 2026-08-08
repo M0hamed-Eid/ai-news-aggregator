@@ -27,11 +27,34 @@ interface OpsSource {
   lastSuccessAt: string | null;
 }
 
+interface SystemStatus {
+  checkedAt: string;
+  backendAlive: boolean;
+  databaseConnected: boolean;
+  content: {
+    newArticles24h: number;
+    newVideos24h: number;
+    newEmbeddings24h: number;
+    latestArticleAt: string | null;
+    latestVideoAt: string | null;
+    latestEmbeddingAt: string | null;
+  };
+  email: {
+    digestsSent24h: number;
+    digestsSent7d: number;
+  };
+  trendReport: {
+    latestGeneratedAt: string | null;
+  };
+  notes: string;
+}
+
 interface OpsResponse {
   totalCount: number;
   activeCount: number;
   unhealthyCount: number;
   sources: OpsSource[];
+  systemStatus: SystemStatus;
 }
 
 export default function OpsPage() {
@@ -92,6 +115,59 @@ export default function OpsPage() {
             <h1 className="text-xl font-bold tracking-tight text-ink">Ops Dashboard</h1>
             <p className="text-sm text-ink-muted">Scraper health across every configured source.</p>
           </div>
+        </div>
+
+        {/* M16 — lightweight system status (no new infra, plain aggregates
+            over data the pipeline already writes; see OpsAPIView's own
+            docstring for what this deliberately does NOT try to track). */}
+        <div className="mb-6 rounded-xl border border-border bg-card p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <span className={`h-2 w-2 rounded-full ${data.systemStatus.databaseConnected ? 'bg-emerald-500' : 'bg-destructive'}`} />
+            <h2 className="text-sm font-semibold text-ink">
+              System status — {data.systemStatus.databaseConnected ? 'database connected' : 'database unreachable'}
+            </h2>
+          </div>
+          <div className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
+            <div>
+              <p className="text-xs text-ink-muted">New articles (24h)</p>
+              <p className="font-semibold text-ink">{data.systemStatus.content.newArticles24h}</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">New videos (24h)</p>
+              <p className="font-semibold text-ink">{data.systemStatus.content.newVideos24h}</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">New embeddings (24h)</p>
+              <p className="font-semibold text-ink">{data.systemStatus.content.newEmbeddings24h}</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Digests sent (24h / 7d)</p>
+              <p className="font-semibold text-ink">{data.systemStatus.email.digestsSent24h} / {data.systemStatus.email.digestsSent7d}</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Latest article</p>
+              <p className="font-semibold text-ink">
+                {data.systemStatus.content.latestArticleAt ? formatDistanceToNow(new Date(data.systemStatus.content.latestArticleAt), { addSuffix: true }) : '—'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Latest embedding</p>
+              <p className="font-semibold text-ink">
+                {data.systemStatus.content.latestEmbeddingAt ? formatDistanceToNow(new Date(data.systemStatus.content.latestEmbeddingAt), { addSuffix: true }) : '—'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Latest trend report</p>
+              <p className="font-semibold text-ink">
+                {data.systemStatus.trendReport.latestGeneratedAt ? formatDistanceToNow(new Date(data.systemStatus.trendReport.latestGeneratedAt), { addSuffix: true }) : '—'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Checked</p>
+              <p className="font-semibold text-ink">{formatDistanceToNow(new Date(data.systemStatus.checkedAt), { addSuffix: true })}</p>
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-ink-muted">{data.systemStatus.notes}</p>
         </div>
 
         <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">

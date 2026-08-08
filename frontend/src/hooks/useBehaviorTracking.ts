@@ -17,9 +17,9 @@
 
 import { useEffect, useRef } from 'react';
 import { useAppStore } from '@/lib/store';
-import { getCsrfToken } from '@/lib/api';
+import { apiUrl, getCsrfToken } from '@/lib/api';
 
-const EVENTS_URL = '/behavior/events/';
+const EVENTS_URL = apiUrl('/behavior/events/');
 const FLUSH_INTERVAL_MS = 10000;
 
 type BehaviorEvent =

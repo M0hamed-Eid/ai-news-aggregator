@@ -36,10 +36,16 @@ INSTALLED_APPS = [
     "apps.catalog",  # read-only, pipeline-owned tables
     "apps.news",
     "apps.assistant",  # M14 — RAG chat assistant, depends on catalog (read-only) + accounts (entitlements)
+    "corsheaders",  # M16 — Vercel<->Render split-domain deploy, see settings/prod.py
 ]
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # As high as practical per django-cors-headers' own install docs — must
+    # run before CommonMiddleware so it can add CORS headers to that
+    # middleware's redirect responses too. A no-op in the same-origin Oracle
+    # deployment (CORS_ALLOWED_ORIGINS is empty there, see prod.py).
+    "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -181,3 +187,15 @@ STRIPE_PRICE_ID_PRO = env("STRIPE_PRICE_ID_PRO", default="")
 # endpoint on this, same degrade-honestly discipline as Stripe/Gmail above —
 # the non-streaming endpoint (AssistantMessageView) works with zero setup.
 GROQ_API_KEY = env("GROQ_API_KEY", default="")
+# M16 — multi-key failover (apps.assistant.llm_client._load_groq_keys()).
+# Numbered keys are entirely optional: with none set, behavior is exactly
+# what it was before this existed (single GROQ_API_KEY, no failover). Fixed
+# count (not a dynamic scan) because Django settings are static at import
+# time — 5 is a generous ceiling for "yourself and your teammates" without
+# needing a settings-schema change if someone adds a 6th key later than
+# expected (it would just be silently unused; documented in .env.example).
+GROQ_API_KEY_1 = env("GROQ_API_KEY_1", default="")
+GROQ_API_KEY_2 = env("GROQ_API_KEY_2", default="")
+GROQ_API_KEY_3 = env("GROQ_API_KEY_3", default="")
+GROQ_API_KEY_4 = env("GROQ_API_KEY_4", default="")
+GROQ_API_KEY_5 = env("GROQ_API_KEY_5", default="")

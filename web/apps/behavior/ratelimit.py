@@ -5,10 +5,14 @@ django-ratelimit/DRF/CSRF-exempt precedent anywhere), so there's no
 convention to match; kept intentionally small, no new dependency beyond the
 `redis` package already added for the CACHES backend.
 """
+import logging
 from urllib.parse import urlparse
 
 from django.conf import settings
 from django.core.cache import cache
+from redis.exceptions import RedisError
+
+logger = logging.getLogger(__name__)
 
 
 def is_first_party(request) -> bool:
@@ -55,12 +59,24 @@ def check_rate_limit(key: str, limit: int, window_seconds: int) -> bool:
     race under concurrent requests (two requests both read None and both
     write 1) is an accepted tradeoff for a soft per-minute analytics limiter
     — not worth reaching for atomic-only primitives for this use case.
+
+    Fails OPEN (allows the request) on a Redis error, logged as a warning —
+    a rate limiter is a defense-in-depth measure, not core functionality;
+    a brief Upstash blip should degrade the site to "unlimited," matching
+    the graceful-degradation discipline already used by search/source
+    submission, not 500 every save/hide/event/assistant call (found during
+    the production-readiness audit: this previously had no exception
+    handling at all).
     """
-    count = cache.get(key)
-    if count is None:
-        cache.set(key, 1, timeout=window_seconds)
+    try:
+        count = cache.get(key)
+        if count is None:
+            cache.set(key, 1, timeout=window_seconds)
+            return True
+        if count >= limit:
+            return False
+        cache.incr(key)
         return True
-    if count >= limit:
-        return False
-    cache.incr(key)
-    return True
+    except RedisError:
+        logger.warning("check_rate_limit: Redis unavailable, failing open for key=%s", key)
+        return True

@@ -49,6 +49,10 @@ export function routeToPath(page: PageRoute, params: Record<string, string> = {}
       return '/ops';
     case 'trending-stories':
       return '/trending';
+    case 'terms':
+      return '/terms';
+    case 'privacy':
+      return '/privacy';
     // password-reset-confirm / password-reset-complete / email-verify-done are
     // reached via an emailed link and stay classic Django server-rendered
     // pages entirely outside this SPA (see the integration plan) — no path

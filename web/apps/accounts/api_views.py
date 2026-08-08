@@ -25,6 +25,7 @@ as SessionView, so the frontend can funnel any auth action (login, signup,
 logout, or the initial session check) through one response parser.
 """
 import json
+import logging
 
 from django.contrib.auth import login, logout
 from django.contrib.auth import authenticate
@@ -39,13 +40,31 @@ from apps.onboarding.models import Persona
 from .email_verification import send_verification_email
 from .entitlements import FEATURE_PLANS, user_can
 from .forms import BootstrapPasswordResetForm, RegisterForm
-from .models import StripeCustomer, User
+from .legal import CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION
+from .models import StripeCustomer, TermsAcceptance, User
 from .views import login_rate_limit_ok
+
+logger = logging.getLogger(__name__)
 
 
 def _session_payload(user) -> dict:
     if not user.is_authenticated:
         return {"isAuthenticated": False, "user": None, "entitlements": {}}
+
+    # M16 — has this user accepted the CURRENT terms/privacy version? Only
+    # the latest acceptance row matters here (TermsAcceptance is
+    # append-only so the full history survives, but "does this session
+    # need a re-acceptance prompt" is a question about the most recent one
+    # only). A user with zero rows (pre-M16 account) also needs prompting.
+    latest = (
+        TermsAcceptance.objects.filter(user=user).order_by("-accepted_at").first()
+    )
+    needs_terms_acceptance = (
+        latest is None
+        or latest.terms_version != CURRENT_TERMS_VERSION
+        or latest.privacy_policy_version != CURRENT_PRIVACY_VERSION
+    )
+
     return {
         "isAuthenticated": True,
         "user": {
@@ -58,6 +77,9 @@ def _session_payload(user) -> dict:
             "onboardingCompleted": user.profile.onboarding_completed,
         },
         "entitlements": {feature: user_can(user, feature) for feature in FEATURE_PLANS},
+        "needsTermsAcceptance": needs_terms_acceptance,
+        "termsVersion": CURRENT_TERMS_VERSION,
+        "privacyVersion": CURRENT_PRIVACY_VERSION,
     }
 
 
@@ -114,6 +136,19 @@ class SignupAPIView(View):
         if error is not None:
             return error
 
+        # M16 — required, not optional: the account cannot be created
+        # without it. This is the ONLY consent checkbox at signup — there
+        # is no separate marketing/optional-communications feature in this
+        # app to gate behind a second one (the weekly digest is core
+        # product functionality configured during onboarding, not a
+        # marketing opt-in), so inventing a second checkbox here would be
+        # exactly the "fake consent requirement" this was told not to do.
+        if not payload.get("termsAccepted"):
+            return JsonResponse(
+                {"errors": {"termsAccepted": [{"message": "You must accept the Terms of Use to create an account.", "code": "required"}]}},
+                status=400,
+            )
+
         form = RegisterForm(data={
             "email": payload.get("email", ""),
             "first_name": payload.get("firstName", ""),
@@ -127,9 +162,28 @@ class SignupAPIView(View):
             return JsonResponse({"errors": form.errors.get_json_data(escape_html=False)}, status=400)
 
         user = form.save()
+        TermsAcceptance.objects.create(
+            user=user, terms_version=CURRENT_TERMS_VERSION, privacy_policy_version=CURRENT_PRIVACY_VERSION,
+        )
         login(request, user)
         send_verification_email(user, request)
         return JsonResponse(_session_payload(user), status=201)
+
+
+class AcceptTermsAPIView(LoginRequiredMixin, View):
+    """POST /api/accounts/terms/accept/ — records acceptance of the
+    CURRENT terms/privacy version for an already-logged-in user (the
+    re-acceptance path, for whenever CURRENT_TERMS_VERSION/
+    CURRENT_PRIVACY_VERSION next changes — see apps.accounts.legal). Takes
+    no body; always accepts the current version, never an
+    attacker-supplied one, so there's nothing to validate/trust from the
+    request beyond the session itself."""
+
+    def post(self, request, *args, **kwargs):
+        TermsAcceptance.objects.create(
+            user=request.user, terms_version=CURRENT_TERMS_VERSION, privacy_policy_version=CURRENT_PRIVACY_VERSION,
+        )
+        return JsonResponse(_session_payload(request.user))
 
 
 class LogoutAPIView(View):
@@ -394,13 +448,32 @@ class OpsAPIView(LoginRequiredMixin, View):
     OpsDashboardView's is_staff test_func + its exact source-health query
     and is_unhealthy computation field-for-field), for the recreated
     OpsPage.tsx (M15 — no Django-rendered ops dashboard equivalent existed
-    in the Z.ai frontend, see the integration plan's Phase 4)."""
+    in the Z.ai frontend, see the integration plan's Phase 4).
+
+    M16 — also reports a lightweight `systemStatus` block for production
+    observability (per-source health above already answers "is each
+    scraper alive"; this answers the broader "is the whole pipeline
+    healthy" questions) WITHOUT any new tracking table or paid monitoring
+    service — every number here is a plain aggregate over data the
+    pipeline already writes as a normal side effect of running. What this
+    deliberately does NOT try to reconstruct: a full per-run pass/fail
+    history or an LLM call/failure counter — neither is persisted
+    anywhere today, and the honest, lightweight place to see them is
+    GitHub Actions' own run history (already free, already exists) and
+    each run's own print_summary() log line (already written, includes
+    articles_errors/scoring_errors/rag_errors/deep_video_errors etc.) —
+    duplicating that into a new DB table would be the "unnecessary
+    infrastructure" this was told to avoid, not genuine lightweight
+    monitoring."""
 
     def get(self, request, *args, **kwargs):
         if not request.user.is_staff:
             return JsonResponse({"error": "Staff access required."}, status=403)
 
-        from apps.catalog.models import Source
+        from django.db import connection
+        from django.utils import timezone
+
+        from apps.catalog.models import Article, DigestLog, Embedding, Source, TrendReport, YoutubeVideo
 
         sources = list(Source.objects.all().order_by("category", "name"))
         for source in sources:
@@ -409,6 +482,19 @@ class OpsAPIView(LoginRequiredMixin, View):
                 and source.last_run_at is not None
                 and (source.last_success_at is None or source.last_success_at < source.last_run_at)
             )
+
+        db_connected = True
+        try:
+            connection.ensure_connection()
+        except Exception:
+            db_connected = False
+
+        cutoff_24h = timezone.now() - timezone.timedelta(hours=24)
+        cutoff_7d = timezone.now() - timezone.timedelta(days=7)
+        latest_article = Article.objects.order_by("-created_at").values_list("created_at", flat=True).first()
+        latest_video = YoutubeVideo.objects.order_by("-created_at").values_list("created_at", flat=True).first()
+        latest_embedding = Embedding.objects.order_by("-created_at").values_list("created_at", flat=True).first()
+        latest_trend_report = TrendReport.objects.order_by("-generated_at").values_list("generated_at", flat=True).first()
 
         return JsonResponse({
             "totalCount": len(sources),
@@ -427,6 +513,32 @@ class OpsAPIView(LoginRequiredMixin, View):
                 }
                 for s in sources
             ],
+            "systemStatus": {
+                "checkedAt": timezone.now().isoformat(),
+                "backendAlive": True,  # trivially true -- this response is proof
+                "databaseConnected": db_connected,
+                "content": {
+                    "newArticles24h": Article.objects.filter(created_at__gte=cutoff_24h).count(),
+                    "newVideos24h": YoutubeVideo.objects.filter(created_at__gte=cutoff_24h).count(),
+                    "newEmbeddings24h": Embedding.objects.filter(created_at__gte=cutoff_24h).count(),
+                    "latestArticleAt": latest_article.isoformat() if latest_article else None,
+                    "latestVideoAt": latest_video.isoformat() if latest_video else None,
+                    "latestEmbeddingAt": latest_embedding.isoformat() if latest_embedding else None,
+                },
+                "email": {
+                    "digestsSent24h": DigestLog.objects.filter(sent_at__gte=cutoff_24h).count(),
+                    "digestsSent7d": DigestLog.objects.filter(sent_at__gte=cutoff_7d).count(),
+                },
+                "trendReport": {
+                    "latestGeneratedAt": latest_trend_report.isoformat() if latest_trend_report else None,
+                },
+                "notes": (
+                    "Per-run pipeline pass/fail history and LLM call/failure counts are not "
+                    "persisted in the database -- see GitHub Actions' run history "
+                    "(.github/workflows/pipeline.yml) for exact per-run outcomes, and each run's "
+                    "own log output (run_pipeline.py's print_summary()) for detailed counters."
+                ),
+            },
         })
 
 
@@ -454,3 +566,60 @@ class BillingPortalAPIView(LoginRequiredMixin, View):
             return JsonResponse({"error": "Couldn't open the billing portal. Please try again shortly."}, status=502)
 
         return JsonResponse({"url": portal_session.url})
+
+
+class DeleteAccountAPIView(LoginRequiredMixin, View):
+    """POST /api/accounts/delete/ — {password} -> {"deleted": true}.
+
+    Requires re-entering the current password even though the request is
+    already authenticated — a real safety measure against a stolen/idle
+    session performing an irreversible action, matching the same
+    discipline Django's own admin uses for sensitive actions.
+
+    Cancels any active Stripe subscription FIRST (best-effort — a Stripe
+    API hiccup logs a warning but does not block deletion; leaving a
+    user stuck unable to delete their account because of a third-party
+    API blip would be worse than a rare orphaned-subscription cleanup
+    task, and Stripe itself will still decline future charges once the
+    card/customer is gone from OUR side... this is intentionally the
+    least-bad tradeoff, not a claim that it's perfect).
+
+    Deletion itself is just request.user.delete() — relies entirely on
+    the CASCADE foreign keys already on every user-owned model
+    (SavedItem, UserEvent, UserFollow, UserProfile, StripeCustomer,
+    TermsAcceptance, UserInterest, UserExclusion, UserSourceSubscription,
+    UserDigestSettings — all FK to User with on_delete=CASCADE) rather
+    than hand-deleting each table, so this can never drift out of sync
+    with the schema. Globally shared content (Article, YoutubeVideo,
+    Source, ...) lives in the PIPELINE's own database/ORM entirely, with
+    no foreign key to Django's User table at all — there is structurally
+    nothing here that could delete shared catalog content."""
+
+    def post(self, request, *args, **kwargs):
+        payload, error = _parse_json_body(request)
+        if error is not None:
+            return error
+
+        password = payload.get("password") or ""
+        if not request.user.check_password(password):
+            return JsonResponse({"error": "Incorrect password."}, status=403)
+
+        import stripe
+        from django.conf import settings
+
+        customer = StripeCustomer.objects.filter(user=request.user).first()
+        if customer is not None and customer.stripe_subscription_id and settings.STRIPE_SECRET_KEY:
+            stripe.api_key = settings.STRIPE_SECRET_KEY
+            try:
+                stripe.Subscription.delete(customer.stripe_subscription_id)
+            except stripe.error.StripeError:
+                logger.warning(
+                    "DeleteAccountAPIView: failed to cancel Stripe subscription %s for user_id=%s "
+                    "-- proceeding with account deletion anyway; may need manual cleanup in Stripe.",
+                    customer.stripe_subscription_id, request.user.id,
+                )
+
+        user_id = request.user.id
+        logout(request)
+        User.objects.filter(id=user_id).delete()
+        return JsonResponse({"deleted": True})

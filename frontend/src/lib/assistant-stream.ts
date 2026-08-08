@@ -10,7 +10,7 @@
 // fallback used ONLY when the stream never even connects (a real 403/429/
 // 503 from the stream endpoint itself is surfaced directly, not retried
 // here, since the non-streaming endpoint would fail identically).
-import { api, getCsrfToken } from './api';
+import { api, apiUrl, getCsrfToken } from './api';
 import type { AssistantContextType } from './types';
 
 export interface Citation {
@@ -82,7 +82,7 @@ export class StreamUnavailableError extends Error {}
 export async function streamAssistantMessage(payload: AssistantRequestPayload, callbacks: StreamCallbacks): Promise<void> {
   let res: Response;
   try {
-    res = await fetch('/assistant/stream/', {
+    res = await fetch(apiUrl('/assistant/stream/'), {
       method: 'POST',
       credentials: 'include',
       cache: 'no-store',

@@ -5,6 +5,7 @@ import { Compass, Mail, Lock, User, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useAppStore } from '@/lib/store';
 import { api, ApiError, type SessionResponse } from '@/lib/api';
 import { toast } from 'sonner';
@@ -19,6 +20,7 @@ export default function SignupPage() {
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -29,6 +31,10 @@ export default function SignupPage() {
       setError('Passwords do not match');
       return;
     }
+    if (!termsAccepted) {
+      setError('You must accept the Terms of Use to create an account.');
+      return;
+    }
     setLoading(true);
     try {
       const response = await api.post<SessionResponse>('/api/accounts/signup/', {
@@ -36,6 +42,7 @@ export default function SignupPage() {
         firstName: name,
         password1: password,
         password2: confirmPassword,
+        termsAccepted,
       });
       login(response.user!);
       toast.success('Account created!');
@@ -127,9 +134,29 @@ export default function SignupPage() {
           </div>
         </div>
 
+        <div className="flex items-start gap-2">
+          <Checkbox
+            id="terms-accepted"
+            checked={termsAccepted}
+            onCheckedChange={(checked) => setTermsAccepted(checked === true)}
+            className="mt-0.5"
+          />
+          <Label htmlFor="terms-accepted" className="text-xs font-normal text-ink-muted">
+            I agree to the{' '}
+            <a href="/terms" target="_blank" rel="noopener noreferrer" className="font-medium text-primary hover:underline">
+              Terms of Use
+            </a>{' '}
+            and acknowledge the{' '}
+            <a href="/privacy" target="_blank" rel="noopener noreferrer" className="font-medium text-primary hover:underline">
+              Privacy Policy
+            </a>
+            .
+          </Label>
+        </div>
+
         {error && <p className="text-sm text-destructive">{error}</p>}
 
-        <Button type="submit" className="w-full" disabled={loading}>
+        <Button type="submit" className="w-full" disabled={loading || !termsAccepted}>
           {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           Sign up
         </Button>

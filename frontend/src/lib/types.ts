@@ -23,6 +23,8 @@ export type PageRoute =
   | 'forgot-password'
   | 'password-reset-done'
   | 'password-reset-confirm'
+  | 'terms'
+  | 'privacy'
   | 'password-reset-complete'
   | 'email-verify-done'
   | 'story-cluster'

@@ -4,8 +4,21 @@
 // by Django (see GET /api/session/, apps.accounts.api_views.SessionView)
 // and echoed back as the X-CSRFToken header on any mutating request.
 //
-// Same-origin only: Caddy (prod) / next.config.ts rewrites() (dev) make the
-// Django app appear on this same origin, so no CORS handling belongs here.
+// M16 — split-domain deploy: when NEXT_PUBLIC_API_BASE_URL is unset (the
+// Oracle path, where Caddy/next.config.ts rewrites() make Django appear
+// same-origin, and local dev), every call below stays a bare relative path
+// with EXACTLY today's behavior — zero config, zero risk of regressing the
+// working deployment. Only a Vercel+Render split sets this env var, which
+// makes fetch() target Django's real cross-origin URL. Cross-origin
+// `credentials:'include'` cookie auth then depends on Django's matching
+// CORS_ALLOWED_ORIGINS/CORS_ALLOW_CREDENTIALS/SameSite=None config (see
+// web/config/settings/prod.py) — this file's only job is building the
+// right URL, not deciding whether cookies are allowed to travel.
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? '').replace(/\/+$/, '');
+
+export function apiUrl(path: string): string {
+  return API_BASE_URL ? `${API_BASE_URL}${path}` : path;
+}
 
 // Exported (not just used internally) so assistant-stream.ts's raw
 // fetch()+ReadableStream SSE call — which can't go through the request()
@@ -35,7 +48,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const { body, headers, method = 'GET', ...rest } = options;
   const isMutating = method !== 'GET' && method !== 'HEAD';
 
-  const res = await fetch(path, {
+  const res = await fetch(apiUrl(path), {
     ...rest,
     method,
     credentials: 'include',
