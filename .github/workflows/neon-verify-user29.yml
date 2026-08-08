@@ -1,0 +1,87 @@
+name: Neon verify user 29 (read-only)
+
+# Pure read-only check of user 29's actual row counts on Neon, scoped
+# correctly to user_id=29 -- the add-user29 workflow's own report had a
+# bug (its "after" count was the whole table, not scoped to this user),
+# so this exists to confirm what's actually there independent of that.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install postgresql-client 16
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client-16
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+
+      - name: Query user 29's data on Neon
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          REPORT=neon-verify-user29-result.txt
+          echo "Neon user 29 verification — $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$REPORT"
+          echo "" >> "$REPORT"
+
+          echo "=== users row ===" >> "$REPORT"
+          psql "$DATABASE_URL" -c "SELECT id, email, plan, is_active, email_verified, date_joined FROM users WHERE id=29;" >> "$REPORT" 2>&1
+
+          echo "" >> "$REPORT"
+          echo "=== per-table counts, scoped to user 29 ===" >> "$REPORT"
+          psql "$DATABASE_URL" -c "
+            SELECT 'user_profiles' t, count(*) FROM user_profiles WHERE user_id=29
+            UNION ALL SELECT 'user_digest_settings', count(*) FROM user_digest_settings uds JOIN user_profiles up ON up.id=uds.profile_id WHERE up.user_id=29
+            UNION ALL SELECT 'saved_items', count(*) FROM saved_items WHERE user_id=29
+            UNION ALL SELECT 'user_events', count(*) FROM user_events WHERE user_id=29
+            UNION ALL SELECT 'user_follows', count(*) FROM user_follows WHERE user_id=29
+            UNION ALL SELECT 'digest_log', count(*) FROM digest_log WHERE user_id=29
+            UNION ALL SELECT 'user_rankings', count(*) FROM user_rankings WHERE user_id=29
+            UNION ALL SELECT 'user_affinities', count(*) FROM user_affinities WHERE user_id=29
+            UNION ALL SELECT 'digest_click_tokens', count(*) FROM digest_click_tokens WHERE user_id=29
+            UNION ALL SELECT 'user_profile_vectors', count(*) FROM user_profile_vectors WHERE user_id=29;
+          " >> "$REPORT" 2>&1
+
+          echo "" >> "$REPORT"
+          echo "=== saved_items detail (should be 2, resolved to real Neon article ids) ===" >> "$REPORT"
+          psql "$DATABASE_URL" -c "SELECT content_type, content_id, is_saved, is_read FROM saved_items WHERE user_id=29;" >> "$REPORT" 2>&1
+
+          echo "" >> "$REPORT"
+          echo "=== any orphaned content_id (should be 0 rows) ===" >> "$REPORT"
+          psql "$DATABASE_URL" -c "
+            SELECT 'saved_items' t, si.content_type, si.content_id FROM saved_items si
+              LEFT JOIN articles a ON si.content_type='article' AND a.id=si.content_id
+              LEFT JOIN youtube_videos yv ON si.content_type='youtube_video' AND yv.id=si.content_id
+              WHERE si.user_id=29 AND a.id IS NULL AND yv.id IS NULL
+            UNION ALL
+            SELECT 'user_rankings', ur.content_type, ur.content_id FROM user_rankings ur
+              LEFT JOIN articles a ON ur.content_type='article' AND a.id=ur.content_id
+              LEFT JOIN youtube_videos yv ON ur.content_type='youtube_video' AND yv.id=ur.content_id
+              WHERE ur.user_id=29 AND a.id IS NULL AND yv.id IS NULL
+            UNION ALL
+            SELECT 'digest_click_tokens', dct.content_type, dct.content_id FROM digest_click_tokens dct
+              LEFT JOIN articles a ON dct.content_type='article' AND a.id=dct.content_id
+              LEFT JOIN youtube_videos yv ON dct.content_type='youtube_video' AND yv.id=dct.content_id
+              WHERE dct.user_id=29 AND a.id IS NULL AND yv.id IS NULL;
+          " >> "$REPORT" 2>&1
+
+      - name: Commit result to a run-unique branch
+        if: always()
+        run: |
+          git config user.name "neon-verify-user29-bot"
+          git config user.email "actions@github.com"
+          if [ -f neon-verify-user29-result.txt ]; then
+            git add neon-verify-user29-result.txt
+            git commit -m "Neon verify user29 result $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin HEAD:refs/heads/neon-verify-user29-result-${{ github.run_id }}
+          else
+            echo "No result file produced."
+          fi

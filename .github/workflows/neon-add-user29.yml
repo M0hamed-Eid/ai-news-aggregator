@@ -104,9 +104,14 @@ jobs:
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "\copy staging.u29_$name FROM '$file'"
           }
 
+          # $3 is the exact same WHERE-scoped count expression used for
+          # $before, so after/inserted stay comparable to it. An earlier
+          # version used a whole-table count here (no WHERE at all), which
+          # produced a nonsense "inserted" figure since before was always
+          # scoped to user 29 alone.
           report_row() {
-            t="$1"; before="$2"
-            after=$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM public.$t")
+            t="$1"; before="$2"; where="$3"
+            after=$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM public.$t WHERE $where")
             printf '%-24s %10s %10s %10s\n' "$t" "$before" "$after" "$((after - before))" | tee -a "$REPORT"
           }
 
@@ -120,7 +125,7 @@ jobs:
             ON CONFLICT (id) DO NOTHING;
           "
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT pg_catalog.setval(pg_get_serial_sequence('public.users','id'), GREATEST((SELECT COALESCE(MAX(id),1) FROM public.users), 1), true);"
-          report_row users "$before"
+          report_row users "$before" "id=29"
 
           # --- user_profiles (fresh id, user_id=29) ---
           before=$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM public.user_profiles WHERE user_id=29")
@@ -131,7 +136,7 @@ jobs:
             FROM staging.u29_user_profiles
             ON CONFLICT (user_id) DO NOTHING;
           "
-          report_row user_profiles "$before"
+          report_row user_profiles "$before" "user_id=29"
 
           # --- user_digest_settings (via the profile just inserted/existing) ---
           before=$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM public.user_digest_settings uds JOIN public.user_profiles up ON up.id=uds.profile_id WHERE up.user_id=29")
@@ -142,7 +147,8 @@ jobs:
             FROM staging.u29_user_digest_settings s
             ON CONFLICT (profile_id) DO NOTHING;
           "
-          report_row user_digest_settings "$before"
+          after=$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM public.user_digest_settings uds JOIN public.user_profiles up ON up.id=uds.profile_id WHERE up.user_id=29")
+          printf '%-24s %10s %10s %10s\n' "user_digest_settings" "$before" "$after" "$((after - before))" | tee -a "$REPORT"
 
           # --- saved_items (content_id resolved via url) ---
           before=$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM public.saved_items WHERE user_id=29")
@@ -156,7 +162,7 @@ jobs:
             WHERE COALESCE(a.id, yv.id) IS NOT NULL
             ON CONFLICT DO NOTHING;
           "
-          report_row saved_items "$before"
+          report_row saved_items "$before" "user_id=29"
 
           # --- user_events (content optional — NULL content rows pass
           # through). No unique constraint on this table at all, so a
@@ -180,7 +186,7 @@ jobs:
                   AND ue.content_id IS NOT DISTINCT FROM COALESCE(a.id, yv.id)
               );
           "
-          report_row user_events "$before"
+          report_row user_events "$before" "user_id=29"
 
           # --- user_follows ---
           before=$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM public.user_follows WHERE user_id=29")
@@ -190,7 +196,7 @@ jobs:
             SELECT target_type, target_key, created_at, 29 FROM staging.u29_user_follows
             ON CONFLICT DO NOTHING;
           "
-          report_row user_follows "$before"
+          report_row user_follows "$before" "user_id=29"
 
           # --- digest_log (no unique constraint either — same NOT EXISTS
           # guard, keyed on (user_id, sent_at)) ---
@@ -203,7 +209,7 @@ jobs:
               SELECT 1 FROM public.digest_log dl WHERE dl.user_id = 29 AND dl.sent_at = s.sent_at
             );
           "
-          report_row digest_log "$before"
+          report_row digest_log "$before" "user_id=29"
 
           # --- user_rankings (content_id resolved via url) ---
           before=$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM public.user_rankings WHERE user_id=29")
@@ -217,7 +223,7 @@ jobs:
             WHERE COALESCE(a.id, yv.id) IS NOT NULL
             ON CONFLICT DO NOTHING;
           "
-          report_row user_rankings "$before"
+          report_row user_rankings "$before" "user_id=29"
 
           # --- user_affinities ---
           before=$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM public.user_affinities WHERE user_id=29")
@@ -227,7 +233,7 @@ jobs:
             SELECT 29, dimension, key, weight, updated_at FROM staging.u29_user_affinities
             ON CONFLICT DO NOTHING;
           "
-          report_row user_affinities "$before"
+          report_row user_affinities "$before" "user_id=29"
 
           # --- digest_click_tokens (content_id resolved via url) ---
           before=$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM public.digest_click_tokens WHERE user_id=29")
@@ -241,7 +247,7 @@ jobs:
             WHERE COALESCE(a.id, yv.id) IS NOT NULL
             ON CONFLICT (token) DO NOTHING;
           "
-          report_row digest_click_tokens "$before"
+          report_row digest_click_tokens "$before" "user_id=29"
 
           # --- user_profile_vectors ---
           before=$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM public.user_profile_vectors WHERE user_id=29")
@@ -251,7 +257,7 @@ jobs:
             SELECT 29, vector, model_name, sample_size, updated_at FROM staging.u29_user_profile_vectors
             ON CONFLICT (user_id) DO NOTHING;
           "
-          report_row user_profile_vectors "$before"
+          report_row user_profile_vectors "$before" "user_id=29"
 
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DROP SCHEMA staging CASCADE;"
 
