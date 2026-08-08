@@ -36,21 +36,17 @@ jobs:
           echo "Table counts in backup (via pg_restore --list):" >> neon-backup-info.txt
           pg_restore --list neon-backup-before-migration.dump | grep "TABLE DATA" | wc -l >> neon-backup-info.txt
 
-      - name: Commit and push backup (retries on concurrent-push conflicts)
+      - name: Commit and push backup to a run-unique branch
+        # Pushes to its OWN branch (never chore/neon-readonly-check itself)
+        # so it can never race the reconciliation workflow's own commit to
+        # that shared branch -- a brand-new ref has nothing to conflict
+        # with. Two prior attempts (bare `git push`, then a retry+rebase
+        # loop still targeting the shared branch) both failed on this same
+        # race; a unique ref sidesteps the problem instead of fighting it.
         if: always()
         run: |
           git config user.name "neon-backup-bot"
           git config user.email "actions@github.com"
           git add neon-backup-before-migration.dump neon-backup-info.txt
-          git commit -m "Neon backup before migration $(date -u +%Y-%m-%dT%H:%M:%SZ)" || echo "nothing to commit"
-          for i in 1 2 3 4 5; do
-            if git push origin HEAD:refs/heads/$GITHUB_REF_NAME; then
-              exit 0
-            fi
-            echo "Push rejected (likely a concurrent commit from another workflow run) -- rebasing and retrying ($i/5)"
-            git fetch origin "$GITHUB_REF_NAME"
-            git rebase "origin/$GITHUB_REF_NAME"
-            sleep 3
-          done
-          echo "::error::Failed to push backup after 5 retries"
-          exit 1
+          git commit -m "Neon backup before migration $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin HEAD:refs/heads/neon-backup-result-${{ github.run_id }}
