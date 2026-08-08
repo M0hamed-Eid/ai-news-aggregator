@@ -127,6 +127,22 @@ jobs:
           echo -e "\n=== trend_reports detail ===" >> neon-reconciliation-result.txt
           psql "$DATABASE_URL" -c "SELECT id, week_start_date, llm_model, generated_at FROM trend_reports ORDER BY week_start_date;" >> neon-reconciliation-result.txt 2>&1 || echo "(query failed)" >> neon-reconciliation-result.txt
 
+      - name: User diff (id/email/plan/staff/joined only -- no password hashes)
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set +x
+          echo -e "\n=== Full user list (Neon) ===" >> neon-reconciliation-result.txt
+          psql "$DATABASE_URL" -c "SELECT id, email, plan, is_staff, is_active, date_joined FROM users ORDER BY id;" >> neon-reconciliation-result.txt 2>&1 || echo "(query failed)" >> neon-reconciliation-result.txt
+          echo -e "\n=== user_profiles / interests / exclusions / digest_settings counts per user ===" >> neon-reconciliation-result.txt
+          psql "$DATABASE_URL" -c "
+            SELECT u.id, u.email,
+              (SELECT count(*) FROM user_interests ui JOIN user_profiles up ON up.id=ui.profile_id WHERE up.user_id=u.id) AS interests,
+              (SELECT count(*) FROM user_exclusions ue JOIN user_profiles up ON up.id=ue.profile_id WHERE up.user_id=u.id) AS exclusions
+            FROM users u ORDER BY u.id;
+          " >> neon-reconciliation-result.txt 2>&1 || echo "(query failed)" >> neon-reconciliation-result.txt
+
       - name: Commit and push results
         if: always()
         run: |
