@@ -9,6 +9,13 @@ name: Throwaway - Neon read-only reconciliation check
 # Postgres wire-protocol (port 5432) to external hosts, confirmed earlier in
 # this project's deployment work (see docs/DEPLOYMENT.md's "Known network
 # constraint" note) -- GitHub-hosted runners have normal outbound access.
+#
+# SECRET SAFETY: this workflow must NEVER print $DATABASE_URL, never enable
+# shell tracing (no `set -x`), and never let a command's error output embed
+# the connection string. psql's own connection-failure messages print the
+# HOST it tried to reach but never the password, so its natural stderr
+# output is safe to leave unredacted -- the discipline here is: never
+# `echo "$DATABASE_URL"`, never `env` dump the whole environment, never -x.
 
 on:
   push:
@@ -19,12 +26,67 @@ jobs:
   check-neon-counts:
     runs-on: ubuntu-latest
     steps:
-      - name: Query Neon row counts (read-only)
+      - name: Install postgresql-client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Verify DATABASE_URL secret is actually configured (value never printed)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
-          echo "=== Row counts ==="
+          set +x
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL secret is EMPTY or not set as a repo Actions secret."
+            echo "This is why psql fell back to the local Unix socket last time -- an"
+            echo "empty connection string makes psql use libpq defaults (local socket,"
+            echo "current OS user), matching the exact error from the previous run."
+            echo "Fix: repo Settings -> Secrets and variables -> Actions -> set DATABASE_URL"
+            echo "to the real Neon connection string, then re-push this branch."
+            exit 1
+          fi
+          echo "DATABASE_URL is set (length: ${#DATABASE_URL} chars, value not printed)."
+          case "$DATABASE_URL" in
+            postgres://*|postgresql://*) echo "Scheme looks like a valid Postgres URL." ;;
+            *) echo "::warning::DATABASE_URL does not start with postgres:// or postgresql:// -- check its format." ;;
+          esac
+
+      - name: Test connection (success/failure only, no secret in output)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set +x
+          if psql "$DATABASE_URL" -c "SELECT 1;" > /dev/null 2>connect_err.log; then
+            echo "Connection to Neon: SUCCESS"
+          else
+            echo "::error::Connection to Neon: FAILED"
+            echo "--- psql error (never contains the password) ---"
+            cat connect_err.log
+            exit 1
+          fi
+
+      - name: Schema / migration status
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set +x
+          echo "=== Django migrations (last 10) ==="
+          psql "$DATABASE_URL" -c "SELECT app, name, applied FROM django_migrations ORDER BY id DESC LIMIT 10;" || echo "(django_migrations table not found or query failed)"
+          echo "=== Alembic version (pipeline schema) ==="
+          psql "$DATABASE_URL" -c "SELECT version_num FROM alembic_version;" || echo "(alembic_version table not found or query failed)"
+          echo "=== pgvector extension ==="
+          psql "$DATABASE_URL" -c "SELECT extname, extversion FROM pg_extension WHERE extname='vector';"
+
+      - name: Full table list
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set +x
+          psql "$DATABASE_URL" -c "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name;"
+
+      - name: Row counts (all production-relevant tables)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set +x
           psql "$DATABASE_URL" -c "
             SELECT 'articles', count(*) FROM articles
             UNION ALL SELECT 'youtube_videos', count(*) FROM youtube_videos
@@ -43,7 +105,9 @@ jobs:
             UNION ALL SELECT 'user_profiles', count(*) FROM user_profiles
             UNION ALL SELECT 'user_events', count(*) FROM user_events
             UNION ALL SELECT 'user_interests', count(*) FROM user_interests
+            UNION ALL SELECT 'user_exclusions', count(*) FROM user_exclusions
             UNION ALL SELECT 'user_source_subscriptions', count(*) FROM user_source_subscriptions
+            UNION ALL SELECT 'user_digest_settings', count(*) FROM user_digest_settings
             UNION ALL SELECT 'saved_items', count(*) FROM saved_items
             UNION ALL SELECT 'user_follows', count(*) FROM user_follows
             UNION ALL SELECT 'user_rankings', count(*) FROM user_rankings
@@ -51,10 +115,21 @@ jobs:
             UNION ALL SELECT 'user_affinities', count(*) FROM user_affinities
             ORDER BY 1;
           "
-          echo "=== pgvector extension ==="
-          psql "$DATABASE_URL" -c "SELECT extname, extversion FROM pg_extension WHERE extname='vector';"
-          echo "=== freshness signal ==="
-          psql "$DATABASE_URL" -c "SELECT max(id) AS max_article_id, max(published_at) AS newest_article FROM articles;"
-          psql "$DATABASE_URL" -c "SELECT max(id) AS max_user_id, count(*) AS user_count FROM users;"
+
+      - name: Freshness signals (latest timestamps)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set +x
+          echo "=== articles ==="
+          psql "$DATABASE_URL" -c "SELECT max(id) AS max_id, max(published_at) AS newest FROM articles;"
+          echo "=== youtube_videos ==="
+          psql "$DATABASE_URL" -c "SELECT max(id) AS max_id, max(published_at) AS newest FROM youtube_videos;"
+          echo "=== users ==="
+          psql "$DATABASE_URL" -c "SELECT max(id) AS max_id, count(*) AS total, max(date_joined) AS newest_signup FROM users;"
+          echo "=== user_events ==="
+          psql "$DATABASE_URL" -c "SELECT max(id) AS max_id, max(created_at) AS newest FROM user_events;"
+          echo "=== embeddings ==="
+          psql "$DATABASE_URL" -c "SELECT max(id) AS max_id FROM embeddings;"
           echo "=== trend_reports detail ==="
           psql "$DATABASE_URL" -c "SELECT id, week_start_date, llm_model, generated_at FROM trend_reports ORDER BY week_start_date;"
