@@ -1,4 +1,4 @@
-name: Throwaway - Neon read-only reconciliation check
+name: Throwaway - Neon read-only reconciliation check (rerun after credential rotation)
 
 # TEMPORARY, ONE-OFF workflow. Runs only SELECT/COUNT queries against Neon
 # (no INSERT/UPDATE/DELETE/DDL of any kind) to compare row counts against
