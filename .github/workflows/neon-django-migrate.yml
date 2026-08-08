@@ -24,9 +24,6 @@ permissions:
 jobs:
   migrate:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
     env:
       DJANGO_SETTINGS_MODULE: config.settings.dev
       # Only DATABASE_URL matters for a migrate-only run -- SECRET_KEY/
@@ -70,9 +67,11 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
+        working-directory: web
         run: pip install -r requirements.txt
 
       - name: Show pending migrations (read-only)
+        working-directory: web
         run: |
           echo "Neon Django migration state — $(date -u +%Y-%m-%dT%H:%M:%SZ)" > ../neon-django-migrate-result.txt
           echo "" >> ../neon-django-migrate-result.txt
@@ -80,6 +79,7 @@ jobs:
           python manage.py showmigrations >> ../neon-django-migrate-result.txt
 
       - name: Apply migrations
+        working-directory: web
         run: |
           echo "" >> ../neon-django-migrate-result.txt
           echo "=== migrate output ===" >> ../neon-django-migrate-result.txt
@@ -87,6 +87,7 @@ jobs:
 
       - name: Show migrations again (confirm)
         if: always()
+        working-directory: web
         run: |
           echo "" >> ../neon-django-migrate-result.txt
           echo "=== After ===" >> ../neon-django-migrate-result.txt
@@ -94,7 +95,6 @@ jobs:
 
       - name: Commit result to a run-unique branch
         if: always()
-        working-directory: .
         run: |
           git config user.name "neon-django-migrate-bot"
           git config user.email "actions@github.com"
