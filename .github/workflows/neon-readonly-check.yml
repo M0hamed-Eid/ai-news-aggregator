@@ -6,20 +6,23 @@ name: Throwaway - Neon read-only reconciliation check
 # its branch once the counts have been read.
 #
 # Exists only because this developer machine's outbound network blocks
-# Postgres wire-protocol (port 5432) to external hosts, confirmed earlier in
-# this project's deployment work (see docs/DEPLOYMENT.md's "Known network
-# constraint" note) -- GitHub-hosted runners have normal outbound access.
+# Postgres wire-protocol (port 5432) to external hosts -- GitHub-hosted
+# runners have normal outbound access.
 #
-# Writes its results to neon-reconciliation-result.txt and commits it back
-# to THIS branch (not main) so the results can be read via git pull / the
-# raw.githubusercontent.com URL -- Actions log download requires a repo
-# admin token that isn't available in the environment reading these
-# results, but a normal git push/pull already works fine.
+# Writes results to neon-reconciliation-result.txt and commits it back to
+# THIS branch (Actions log download needs an admin-scoped token that isn't
+# available where these results get read; a plain git pull already works).
+# The commit step runs with `if: always()` so a mid-run query failure
+# (e.g. a table that exists locally but hasn't been migrated to Neon yet --
+# itself a real, useful reconciliation finding) still leaves the partial
+# results readable instead of silently discarding them, which is exactly
+# what happened on the previous attempt.
 #
-# SECRET SAFETY: never prints $DATABASE_URL, never enables shell tracing
-# (no `set -x`), and the results file itself only ever contains query
-# OUTPUT (row counts, timestamps, table names) -- never the connection
-# string or any credential.
+# Every psql call below is individually fault-tolerant (`|| echo ... `) so
+# ONE missing table can never abort the rest of the diagnostic under GitHub
+# Actions' default bash -e behavior for `run:` steps.
+#
+# SECRET SAFETY: never prints $DATABASE_URL, never enables shell tracing.
 
 on:
   push:
@@ -38,99 +41,94 @@ jobs:
       - name: Install postgresql-client
         run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
 
+      - name: Init results file
+        run: echo "Neon reconciliation - $(date -u)" > neon-reconciliation-result.txt
+
       - name: Verify DATABASE_URL secret is actually configured (value never printed)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           set +x
           if [ -z "$DATABASE_URL" ]; then
-            echo "::error::DATABASE_URL secret is EMPTY or not set as a repo Actions secret."
+            echo "DATABASE_URL secret is EMPTY or not set." >> neon-reconciliation-result.txt
             exit 1
           fi
-          echo "DATABASE_URL is set (length: ${#DATABASE_URL} chars, value not printed)." | tee neon-reconciliation-result.txt
-          case "$DATABASE_URL" in
-            postgres://*|postgresql://*) echo "Scheme looks like a valid Postgres URL." | tee -a neon-reconciliation-result.txt ;;
-            *) echo "::warning::DATABASE_URL does not start with postgres:// or postgresql://" ;;
-          esac
+          echo "DATABASE_URL is set (length: ${#DATABASE_URL} chars, value not printed)." >> neon-reconciliation-result.txt
 
       - name: Test connection
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           set +x
-          {
-            echo ""
-            echo "=== Connection test ==="
-          } >> neon-reconciliation-result.txt
-          if psql "$DATABASE_URL" -c "SELECT 1;" > /dev/null 2>connect_err.log; then
+          echo -e "\n=== Connection test ===" >> neon-reconciliation-result.txt
+          if psql "$DATABASE_URL" -c "SELECT 1;" > /dev/null 2>>neon-reconciliation-result.txt; then
             echo "SUCCESS" >> neon-reconciliation-result.txt
           else
             echo "FAILED" >> neon-reconciliation-result.txt
-            cat connect_err.log >> neon-reconciliation-result.txt
             exit 1
           fi
 
-      - name: Schema / migration status + table list + row counts + freshness
+      - name: Schema / migration status
+        if: always()
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           set +x
-          {
-            echo ""
-            echo "=== Django migrations (last 10) ==="
-          } >> neon-reconciliation-result.txt
-          psql "$DATABASE_URL" -c "SELECT app, name, applied FROM django_migrations ORDER BY id DESC LIMIT 10;" >> neon-reconciliation-result.txt 2>&1 || true
+          echo -e "\n=== Django migrations (last 10) ===" >> neon-reconciliation-result.txt
+          psql "$DATABASE_URL" -c "SELECT app, name, applied FROM django_migrations ORDER BY id DESC LIMIT 10;" >> neon-reconciliation-result.txt 2>&1 || echo "(query failed)" >> neon-reconciliation-result.txt
 
           echo -e "\n=== Alembic version (pipeline schema) ===" >> neon-reconciliation-result.txt
-          psql "$DATABASE_URL" -c "SELECT version_num FROM alembic_version;" >> neon-reconciliation-result.txt 2>&1 || true
+          psql "$DATABASE_URL" -c "SELECT version_num FROM alembic_version;" >> neon-reconciliation-result.txt 2>&1 || echo "(query failed)" >> neon-reconciliation-result.txt
 
           echo -e "\n=== pgvector extension ===" >> neon-reconciliation-result.txt
-          psql "$DATABASE_URL" -c "SELECT extname, extversion FROM pg_extension WHERE extname='vector';" >> neon-reconciliation-result.txt 2>&1
+          psql "$DATABASE_URL" -c "SELECT extname, extversion FROM pg_extension WHERE extname='vector';" >> neon-reconciliation-result.txt 2>&1 || echo "(query failed)" >> neon-reconciliation-result.txt
 
+      - name: Full table list
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set +x
           echo -e "\n=== Full table list ===" >> neon-reconciliation-result.txt
-          psql "$DATABASE_URL" -c "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name;" >> neon-reconciliation-result.txt 2>&1
+          psql "$DATABASE_URL" -c "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name;" >> neon-reconciliation-result.txt 2>&1 || echo "(query failed)" >> neon-reconciliation-result.txt
 
+      - name: Row counts (each table independently fault-tolerant)
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set +x
           echo -e "\n=== Row counts ===" >> neon-reconciliation-result.txt
-          psql "$DATABASE_URL" -c "
-            SELECT 'articles', count(*) FROM articles
-            UNION ALL SELECT 'youtube_videos', count(*) FROM youtube_videos
-            UNION ALL SELECT 'embeddings', count(*) FROM embeddings
-            UNION ALL SELECT 'content_enrichment', count(*) FROM content_enrichment
-            UNION ALL SELECT 'content_chunks', count(*) FROM content_chunks
-            UNION ALL SELECT 'sources', count(*) FROM sources
-            UNION ALL SELECT 'taxonomy_topics', count(*) FROM taxonomy_topics
-            UNION ALL SELECT 'entities', count(*) FROM entities
-            UNION ALL SELECT 'content_clusters', count(*) FROM content_clusters
-            UNION ALL SELECT 'content_scores', count(*) FROM content_scores
-            UNION ALL SELECT 'trends', count(*) FROM trends
-            UNION ALL SELECT 'trend_reports', count(*) FROM trend_reports
-            UNION ALL SELECT 'stt_jobs', count(*) FROM stt_jobs
-            UNION ALL SELECT 'users', count(*) FROM users
-            UNION ALL SELECT 'user_profiles', count(*) FROM user_profiles
-            UNION ALL SELECT 'user_events', count(*) FROM user_events
-            UNION ALL SELECT 'user_interests', count(*) FROM user_interests
-            UNION ALL SELECT 'user_exclusions', count(*) FROM user_exclusions
-            UNION ALL SELECT 'user_source_subscriptions', count(*) FROM user_source_subscriptions
-            UNION ALL SELECT 'user_digest_settings', count(*) FROM user_digest_settings
-            UNION ALL SELECT 'saved_items', count(*) FROM saved_items
-            UNION ALL SELECT 'user_follows', count(*) FROM user_follows
-            UNION ALL SELECT 'user_rankings', count(*) FROM user_rankings
-            UNION ALL SELECT 'digest_log', count(*) FROM digest_log
-            UNION ALL SELECT 'user_affinities', count(*) FROM user_affinities
-            UNION ALL SELECT 'terms_acceptances', count(*) FROM terms_acceptances
-            ORDER BY 1;
-          " >> neon-reconciliation-result.txt 2>&1
+          for t in articles youtube_videos embeddings content_enrichment content_chunks sources \
+                   taxonomy_topics entities content_clusters content_scores trends trend_reports \
+                   stt_jobs users user_profiles user_events user_interests user_exclusions \
+                   user_source_subscriptions user_digest_settings saved_items user_follows \
+                   user_rankings digest_log user_affinities terms_acceptances; do
+            result=$(psql "$DATABASE_URL" -t -c "SELECT count(*) FROM $t;" 2>&1)
+            if [ $? -eq 0 ]; then
+              echo "$t: $(echo $result | xargs)" >> neon-reconciliation-result.txt
+            else
+              echo "$t: TABLE NOT FOUND / QUERY FAILED" >> neon-reconciliation-result.txt
+            fi
+          done
 
+      - name: Freshness signals
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set +x
           echo -e "\n=== Freshness signals ===" >> neon-reconciliation-result.txt
-          psql "$DATABASE_URL" -c "SELECT max(id) AS max_id, max(published_at) AS newest FROM articles;" >> neon-reconciliation-result.txt 2>&1
-          psql "$DATABASE_URL" -c "SELECT max(id) AS max_id, max(published_at) AS newest FROM youtube_videos;" >> neon-reconciliation-result.txt 2>&1
-          psql "$DATABASE_URL" -c "SELECT max(id) AS max_id, count(*) AS total, max(date_joined) AS newest_signup FROM users;" >> neon-reconciliation-result.txt 2>&1
-          psql "$DATABASE_URL" -c "SELECT max(id) AS max_id, max(created_at) AS newest FROM user_events;" >> neon-reconciliation-result.txt 2>&1
-          psql "$DATABASE_URL" -c "SELECT max(id) AS max_id FROM embeddings;" >> neon-reconciliation-result.txt 2>&1
+          psql "$DATABASE_URL" -c "SELECT max(id) AS max_id, max(published_at) AS newest FROM articles;" >> neon-reconciliation-result.txt 2>&1 || echo "(query failed)" >> neon-reconciliation-result.txt
+          psql "$DATABASE_URL" -c "SELECT max(id) AS max_id, max(published_at) AS newest FROM youtube_videos;" >> neon-reconciliation-result.txt 2>&1 || echo "(query failed)" >> neon-reconciliation-result.txt
+          psql "$DATABASE_URL" -c "SELECT max(id) AS max_id, count(*) AS total, max(date_joined) AS newest_signup FROM users;" >> neon-reconciliation-result.txt 2>&1 || echo "(query failed)" >> neon-reconciliation-result.txt
+          psql "$DATABASE_URL" -c "SELECT max(id) AS max_id, max(created_at) AS newest FROM user_events;" >> neon-reconciliation-result.txt 2>&1 || echo "(query failed)" >> neon-reconciliation-result.txt
+          psql "$DATABASE_URL" -c "SELECT max(id) AS max_id FROM embeddings;" >> neon-reconciliation-result.txt 2>&1 || echo "(query failed)" >> neon-reconciliation-result.txt
           echo -e "\n=== trend_reports detail ===" >> neon-reconciliation-result.txt
-          psql "$DATABASE_URL" -c "SELECT id, week_start_date, llm_model, generated_at FROM trend_reports ORDER BY week_start_date;" >> neon-reconciliation-result.txt 2>&1
+          psql "$DATABASE_URL" -c "SELECT id, week_start_date, llm_model, generated_at FROM trend_reports ORDER BY week_start_date;" >> neon-reconciliation-result.txt 2>&1 || echo "(query failed)" >> neon-reconciliation-result.txt
 
       - name: Commit and push results
+        if: always()
         run: |
           git config user.name "neon-reconciliation-bot"
           git config user.email "actions@github.com"
