@@ -1,4 +1,4 @@
-Neon reconciliation - Sat Aug  8 15:26:53 UTC 2026
+Neon reconciliation - Sat Aug  8 15:31:58 UTC 2026
 DATABASE_URL is set (length: 145 chars, value not printed).
 
 === Connection test ===
@@ -142,4 +142,32 @@ user_affinities: 67
  id | week_start_date | llm_model | generated_at 
 ----+-----------------+-----------+--------------
 (0 rows)
+
+
+=== Full user list (Neon) ===
+ id |                 email                  | plan | is_staff | is_active |          date_joined          
+----+----------------------------------------+------+----------+-----------+-------------------------------
+  1 | eng.mohammedeid2024@gmail.com          | pro  | t        | t         | 2026-07-06 08:30:02+00
+  3 | test-multiuser@example.com             | free | f        | t         | 2026-07-12 16:31:18.135402+00
+  4 | me99804@gmail.com                      | free | f        | t         | 2026-07-14 00:34:21.223087+00
+  5 | legacy-user-test@example.com           | free | f        | t         | 2026-07-14 01:00:22.641871+00
+  6 | fresh-signup-test@example.com          | free | f        | t         | 2026-07-14 01:00:51.582092+00
+  7 | wizard-view-test@example.com           | free | f        | t         | 2026-07-14 01:10:10.210274+00
+  8 | wizard-source-persist-test@example.com | free | f        | t         | 2026-07-14 03:25:47.615791+00
+  9 | changcountrey@gmail.com                | free | f        | t         | 2026-07-14 03:28:34.302529+00
+(8 rows)
+
+
+=== user_profiles / interests / exclusions / digest_settings counts per user ===
+ id |                 email                  | interests | exclusions 
+----+----------------------------------------+-----------+------------
+  1 | eng.mohammedeid2024@gmail.com          |         5 |          5
+  3 | test-multiuser@example.com             |         0 |          0
+  4 | me99804@gmail.com                      |         5 |          1
+  5 | legacy-user-test@example.com           |         3 |          9
+  6 | fresh-signup-test@example.com          |         0 |          0
+  7 | wizard-view-test@example.com           |         0 |          0
+  8 | wizard-source-persist-test@example.com |         0 |          2
+  9 | changcountrey@gmail.com                |         4 |          0
+(8 rows)
 
