@@ -1,0 +1,107 @@
+name: Neon Django migrate (schema only, no data changes)
+
+# Applies pending Django migrations to Neon -- specifically
+# accounts.0008_termsacceptance (CREATE TABLE terms_acceptances, confirmed
+# pure-additive: one CreateModel, no data operations). Also picks up
+# whatever else is pending; the catalog app's migrations are all
+# managed=False read-only mirror models (confirmed via grep), so Django
+# issues zero DDL for those regardless -- pure bookkeeping, harmless even
+# if several apply in the same run.
+#
+# `python manage.py migrate` only applies migrations not yet recorded in
+# django_migrations; already-applied ones are no-ops. Safe to re-run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type exactly: yes-migrate-neon'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      # Only DATABASE_URL matters for a migrate-only run -- SECRET_KEY/
+      # ALLOWED_HOSTS/DEBUG are required for base.py to import cleanly but
+      # never affect schema operations. Not reusing a real prod secret
+      # here on purpose: this workflow never serves a request.
+      DJANGO_SECRET_KEY: ci-migrate-only-never-used-to-serve-requests
+      DJANGO_DEBUG: "False"
+      DJANGO_ALLOWED_HOSTS: localhost
+    steps:
+      - name: Verify confirmation input
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "yes-migrate-neon" ]; then
+            echo "Confirmation input did not match. Aborting without touching Neon."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Pre-flight secret check
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "DATABASE_URL secret is empty. Aborting."
+            exit 1
+          fi
+          echo "DATABASE_URL length: ${#DATABASE_URL}"
+          # django-environ's env.db() only understands the plain
+          # postgresql:// scheme, not SQLAlchemy's postgresql+psycopg2://
+          # (confirmed locally: the same secret works fine for psql/
+          # SQLAlchemy either way, so this is a defensive normalization,
+          # not evidence the secret is actually in the wrong format).
+          # Exported here (not in the job-level env: block) so there's no
+          # ambiguity about which value wins in later steps.
+          echo "DATABASE_URL=${DATABASE_URL/postgresql+psycopg2:/postgresql:}" >> "$GITHUB_ENV"
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Show pending migrations (read-only)
+        run: |
+          echo "Neon Django migration state — $(date -u +%Y-%m-%dT%H:%M:%SZ)" > ../neon-django-migrate-result.txt
+          echo "" >> ../neon-django-migrate-result.txt
+          echo "=== Before ===" >> ../neon-django-migrate-result.txt
+          python manage.py showmigrations >> ../neon-django-migrate-result.txt
+
+      - name: Apply migrations
+        run: |
+          echo "" >> ../neon-django-migrate-result.txt
+          echo "=== migrate output ===" >> ../neon-django-migrate-result.txt
+          python manage.py migrate --no-input >> ../neon-django-migrate-result.txt 2>&1
+
+      - name: Show migrations again (confirm)
+        if: always()
+        run: |
+          echo "" >> ../neon-django-migrate-result.txt
+          echo "=== After ===" >> ../neon-django-migrate-result.txt
+          python manage.py showmigrations >> ../neon-django-migrate-result.txt
+
+      - name: Commit result to a run-unique branch
+        if: always()
+        working-directory: .
+        run: |
+          git config user.name "neon-django-migrate-bot"
+          git config user.email "actions@github.com"
+          if [ -f neon-django-migrate-result.txt ]; then
+            git add neon-django-migrate-result.txt
+            git commit -m "Neon Django migrate result $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin HEAD:refs/heads/neon-django-migrate-result-${{ github.run_id }}
+          else
+            echo "No result file produced."
+          fi
