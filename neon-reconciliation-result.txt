@@ -1,0 +1,145 @@
+Neon reconciliation - Sat Aug  8 15:26:53 UTC 2026
+DATABASE_URL is set (length: 145 chars, value not printed).
+
+=== Connection test ===
+SUCCESS
+
+=== Django migrations (last 10) ===
+    app     |                      name                       |            applied            
+------------+-------------------------------------------------+-------------------------------
+ accounts   | 0007_stripecustomer                             | 2026-07-18 16:48:23.578335+00
+ accounts   | 0006_user_email_verified                        | 2026-07-18 16:37:50.495309+00
+ catalog    | 0008_contentchunk_sttjob                        | 2026-07-18 14:35:08.880418+00
+ catalog    | 0007_trend_trendreport                          | 2026-07-17 16:53:39.918055+00
+ onboarding | 0006_usersourcesubscription                     | 2026-07-15 19:24:22.314211+00
+ catalog    | 0006_personentity                               | 2026-07-15 19:24:21.56924+00
+ catalog    | 0005_embedding                                  | 2026-07-15 02:52:25.106421+00
+ onboarding | 0005_userdigestsettings_format_balance_and_more | 2026-07-15 02:52:24.537006+00
+ behavior   | 0002_userfollow                                 | 2026-07-15 02:52:23.939802+00
+ onboarding | 0004_link_taxonomy_topics                       | 2026-07-14 23:49:40.287732+00
+(10 rows)
+
+
+=== Alembic version (pipeline schema) ===
+ version_num  
+--------------
+ 86312c40025b
+(1 row)
+
+
+=== pgvector extension ===
+ extname | extversion 
+---------+------------
+ vector  | 0.8.0
+(1 row)
+
+
+=== Full table list ===
+        table_name         
+---------------------------
+ alembic_version
+ articles
+ auth_group
+ auth_group_permissions
+ auth_permission
+ content_chunks
+ content_cluster_members
+ content_clusters
+ content_enrichment
+ content_entities
+ content_scores
+ content_topics
+ digest_click_tokens
+ digest_log
+ django_admin_log
+ django_content_type
+ django_migrations
+ django_session
+ embeddings
+ entities
+ interests
+ person_entities
+ personas
+ saved_items
+ sources
+ stripe_customers
+ stt_jobs
+ taxonomy_topics
+ trend_reports
+ trends
+ user_affinities
+ user_digest_settings
+ user_events
+ user_exclusions
+ user_follows
+ user_interests
+ user_profile_vectors
+ user_profiles
+ user_rankings
+ user_source_subscriptions
+ users
+ users_groups
+ users_user_permissions
+ youtube_videos
+(44 rows)
+
+
+=== Row counts ===
+articles: 3444
+youtube_videos: 123
+embeddings: 3567
+content_enrichment: 3480
+content_chunks: 4
+sources: 16
+taxonomy_topics: 27
+entities: 5809
+content_clusters: 3
+content_scores: 3567
+trends: 10795
+trend_reports: 0
+stt_jobs: 0
+users: 8
+user_profiles: 8
+user_events: 4793
+user_interests: 17
+user_exclusions: 17
+user_source_subscriptions: 2
+user_digest_settings: 8
+saved_items: 41
+user_follows: 1
+user_rankings: 71
+digest_log: 46
+user_affinities: 67
+
+=== Freshness signals ===
+ max_id |         newest         
+--------+------------------------
+   9421 | 2026-07-20 00:00:00+00
+(1 row)
+
+ max_id |         newest         
+--------+------------------------
+    231 | 2026-07-17 14:57:49+00
+(1 row)
+
+ max_id | total |         newest_signup         
+--------+-------+-------------------------------
+      9 |     8 | 2026-07-14 03:28:34.302529+00
+(1 row)
+
+ max_id |            newest             
+--------+-------------------------------
+   5227 | 2026-07-19 14:08:02.371471+00
+(1 row)
+
+ max_id 
+--------
+   7007
+(1 row)
+
+
+=== trend_reports detail ===
+ id | week_start_date | llm_model | generated_at 
+----+-----------------+-----------+--------------
+(0 rows)
+
