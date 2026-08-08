@@ -1,0 +1,38 @@
+Neon user 29 verification — 2026-08-08T17:41:33Z
+
+=== users row ===
+ id |              email               | plan | is_active | email_verified |          date_joined          
+----+----------------------------------+------+-----------+----------------+-------------------------------
+ 29 | mohammedeidabdelmeguid@gmail.com | free | t         | f              | 2026-07-26 17:35:01.785751+00
+(1 row)
+
+
+=== per-table counts, scoped to user 29 ===
+          t           | count 
+----------------------+-------
+ user_profiles        |     1
+ user_digest_settings |     1
+ saved_items          |     2
+ user_events          |    80
+ user_follows         |     2
+ digest_log           |    12
+ user_rankings        |    10
+ user_affinities      |    71
+ digest_click_tokens  |   500
+ user_profile_vectors |     1
+(10 rows)
+
+
+=== saved_items detail (should be 2, resolved to real Neon article ids) ===
+ content_type | content_id | is_saved | is_read 
+--------------+------------+----------+---------
+ article      |      26918 | t        | f
+ article      |      26919 | f        | t
+(2 rows)
+
+
+=== any orphaned content_id (should be 0 rows) ===
+ t | content_type | content_id 
+---+--------------+------------
+(0 rows)
+
