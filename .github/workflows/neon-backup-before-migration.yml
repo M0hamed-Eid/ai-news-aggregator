@@ -1,0 +1,46 @@
+name: Throwaway - Backup Neon before migration
+
+# ONE-OFF safety backup, run BEFORE any write touches Neon. Full pg_dump in
+# compressed custom format, committed back to this branch so it's
+# retrievable via git even without Actions log/artifact access. If anything
+# in the migration goes wrong, this is the restore point.
+#
+# Safe to delete this file, the branch, and the committed .dump file once
+# the migration is verified and this safety net is no longer needed.
+
+on:
+  push:
+    branches:
+      - chore/neon-readonly-check
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install postgresql-client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Dump Neon (full, compressed custom format)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set +x
+          pg_dump "$DATABASE_URL" -Fc -f neon-backup-before-migration.dump
+          echo "Backup size:" > neon-backup-info.txt
+          ls -la neon-backup-before-migration.dump >> neon-backup-info.txt
+          echo "Table counts in backup (via pg_restore --list):" >> neon-backup-info.txt
+          pg_restore --list neon-backup-before-migration.dump | grep "TABLE DATA" | wc -l >> neon-backup-info.txt
+
+      - name: Commit and push backup
+        if: always()
+        run: |
+          git config user.name "neon-backup-bot"
+          git config user.email "actions@github.com"
+          git add neon-backup-before-migration.dump neon-backup-info.txt
+          git commit -m "Neon backup before migration $(date -u +%Y-%m-%dT%H:%M:%SZ)" || echo "nothing to commit"
+          git push
