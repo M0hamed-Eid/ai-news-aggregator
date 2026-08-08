@@ -1,0 +1,16 @@
+Neon add user 29 — 2026-08-08T17:37:29Z
+
+table                        before      after   inserted
+users                             0          9          9
+user_profiles                     0          9          9
+user_digest_settings              0          9          9
+saved_items                       0         43         43
+user_events                       0       4873       4873
+user_follows                      0          3          3
+digest_log                        0         58         58
+user_rankings                     0         81         81
+user_affinities                   0        138        138
+digest_click_tokens               0       1084       1084
+user_profile_vectors              0          4          4
+
+Done.
