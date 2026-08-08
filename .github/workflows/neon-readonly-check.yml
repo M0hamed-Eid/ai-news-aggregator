@@ -1,0 +1,60 @@
+name: Throwaway - Neon read-only reconciliation check
+
+# TEMPORARY, ONE-OFF workflow. Runs only SELECT/COUNT queries against Neon
+# (no INSERT/UPDATE/DELETE/DDL of any kind) to compare row counts against
+# local dev for the production-readiness audit. Safe to delete this file and
+# its branch once the counts have been read from the Actions log.
+#
+# Exists only because this developer machine's outbound network blocks
+# Postgres wire-protocol (port 5432) to external hosts, confirmed earlier in
+# this project's deployment work (see docs/DEPLOYMENT.md's "Known network
+# constraint" note) -- GitHub-hosted runners have normal outbound access.
+
+on:
+  push:
+    branches:
+      - chore/neon-readonly-check
+
+jobs:
+  check-neon-counts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query Neon row counts (read-only)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          echo "=== Row counts ==="
+          psql "$DATABASE_URL" -c "
+            SELECT 'articles', count(*) FROM articles
+            UNION ALL SELECT 'youtube_videos', count(*) FROM youtube_videos
+            UNION ALL SELECT 'embeddings', count(*) FROM embeddings
+            UNION ALL SELECT 'content_enrichment', count(*) FROM content_enrichment
+            UNION ALL SELECT 'content_chunks', count(*) FROM content_chunks
+            UNION ALL SELECT 'sources', count(*) FROM sources
+            UNION ALL SELECT 'taxonomy_topics', count(*) FROM taxonomy_topics
+            UNION ALL SELECT 'entities', count(*) FROM entities
+            UNION ALL SELECT 'content_clusters', count(*) FROM content_clusters
+            UNION ALL SELECT 'content_scores', count(*) FROM content_scores
+            UNION ALL SELECT 'trends', count(*) FROM trends
+            UNION ALL SELECT 'trend_reports', count(*) FROM trend_reports
+            UNION ALL SELECT 'stt_jobs', count(*) FROM stt_jobs
+            UNION ALL SELECT 'users', count(*) FROM users
+            UNION ALL SELECT 'user_profiles', count(*) FROM user_profiles
+            UNION ALL SELECT 'user_events', count(*) FROM user_events
+            UNION ALL SELECT 'user_interests', count(*) FROM user_interests
+            UNION ALL SELECT 'user_source_subscriptions', count(*) FROM user_source_subscriptions
+            UNION ALL SELECT 'saved_items', count(*) FROM saved_items
+            UNION ALL SELECT 'user_follows', count(*) FROM user_follows
+            UNION ALL SELECT 'user_rankings', count(*) FROM user_rankings
+            UNION ALL SELECT 'digest_log', count(*) FROM digest_log
+            UNION ALL SELECT 'user_affinities', count(*) FROM user_affinities
+            ORDER BY 1;
+          "
+          echo "=== pgvector extension ==="
+          psql "$DATABASE_URL" -c "SELECT extname, extversion FROM pg_extension WHERE extname='vector';"
+          echo "=== freshness signal ==="
+          psql "$DATABASE_URL" -c "SELECT max(id) AS max_article_id, max(published_at) AS newest_article FROM articles;"
+          psql "$DATABASE_URL" -c "SELECT max(id) AS max_user_id, count(*) AS user_count FROM users;"
+          echo "=== trend_reports detail ==="
+          psql "$DATABASE_URL" -c "SELECT id, week_start_date, llm_model, generated_at FROM trend_reports ORDER BY week_start_date;"
