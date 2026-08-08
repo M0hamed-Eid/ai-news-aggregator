@@ -15,6 +15,9 @@ on:
         description: 'Type exactly: yes-sync-neon'
         required: true
 
+permissions:
+  contents: write
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -50,6 +53,29 @@ jobs:
           echo "DATABASE_URL length: ${#DATABASE_URL}"
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install uv and pipeline dependencies
+        run: |
+          pip install uv
+          uv sync --frozen --no-dev
+
+      - name: Ensure Neon schema is current (CREATE TABLE IF NOT EXISTS only)
+        # A previous run hit "relation public.rag_chunks does not exist" —
+        # Neon's schema was bootstrapped by this same script before the
+        # RagChunk model existed, and nothing re-ran it since. This calls
+        # the project's own create_tables.py (app/database/create_tables.py),
+        # already documented as "safe to re-run, CREATE TABLE IF NOT EXISTS
+        # under the hood" — it only adds tables/the pgvector extension that
+        # are missing, and stamps Alembic head; it never touches existing
+        # tables or data.
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run python -m app.database.create_tables
 
       - name: Verify taxonomy_topics id alignment (read-only)
         # content_topics.taxonomy_topic_id is a plain FK by numeric id (no
