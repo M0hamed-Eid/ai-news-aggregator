@@ -159,20 +159,37 @@ jobs:
             printf '%-26s %10s %10s %10s\n' "$t" "$before" "$after" "$((after - before))" | tee -a "$REPORT"
           }
 
+          # Frees a staging table's storage the moment it's no longer
+          # needed, instead of letting all 16 pile up simultaneously until
+          # the very end — Neon's free tier caps total project storage at
+          # 512MB, and a prior run hit that cap partway through precisely
+          # because every staging table (including a ~78MB rag_chunks
+          # copy) was still sitting there when later tables tried to
+          # insert. entities/articles/youtube_videos are the exception:
+          # their staging copies are the remap join source for every
+          # child table and stay alive until drop_anchor_staging runs.
+          drop_staging() {
+            t="$1"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DROP TABLE IF EXISTS staging.$t;"
+          }
+
           # Plain passthrough merge: no id remap needed, either because
           # the table has no natural key besides id and nothing else
           # references it by a value that could drift (content_clusters),
           # or the table itself IS a natural-key anchor being inserted
           # as-is (entities, articles, youtube_videos — their own id is
           # simply whatever wins the ON CONFLICT race), or there's no
-          # content reference at all (trends, trend_reports).
+          # content reference at all (trends, trend_reports). $2=keep
+          # ("keep" to leave the staging table alive for later remap
+          # joins, anything else/omitted to drop it immediately).
           plain_merge() {
-            t="$1"
+            t="$1"; keep="${2:-}"
             before=$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM public.$t")
             restore_to_staging "$t"
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO public.$t SELECT * FROM staging.$t ON CONFLICT DO NOTHING;"
             reset_sequence "$t"
             report_row "$t" "$before"
+            [ "$keep" = "keep" ] || drop_staging "$t"
           }
 
           # Polymorphic child merge: resolves content_id through
@@ -201,16 +218,27 @@ jobs:
             "
             reset_sequence "$t"
             report_row "$t" "$before"
+            drop_staging "$t"
           }
 
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS staging;"
+          echo "DB size before this run:" >> "$REPORT"
+          psql "$DATABASE_URL" -tAc "SELECT pg_size_pretty(pg_database_size(current_database()));" >> "$REPORT"
 
-          # 1) Natural-key anchors — staging kept alive for every child
-          # merge below, dropped together at the very end.
-          plain_merge entities
+          # Force a clean slate: a prior failed run can leave orphaned
+          # staging tables behind (e.g. a 251,750-row staging.trends from
+          # the run that hit the storage cap mid-insert) that would
+          # otherwise sit there wasting space for the rest of this run too.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS staging CASCADE; CREATE SCHEMA staging;"
+          echo "DB size after clearing any leftover staging schema:" >> "$REPORT"
+          psql "$DATABASE_URL" -tAc "SELECT pg_size_pretty(pg_database_size(current_database()));" >> "$REPORT"
+
+          # 1) Natural-key anchors — staging kept alive ("keep") for every
+          # child merge below, dropped together once nothing needs them
+          # anymore (see drop_anchor_staging near the end).
+          plain_merge entities keep
           plain_merge content_clusters
-          plain_merge articles
-          plain_merge youtube_videos
+          plain_merge articles keep
+          plain_merge youtube_videos keep
 
           # 2) Children needing only the content_id (article/video) remap.
           # taxonomy_topic_id (content_topics) and cluster_id
@@ -270,6 +298,7 @@ jobs:
           "
           reset_sequence content_entities
           report_row content_entities "$before"
+          drop_staging content_entities
 
           # person_entities: entity_id remap only (no content reference).
           # 0 rows locally today, handled correctly regardless.
@@ -285,15 +314,20 @@ jobs:
           "
           reset_sequence person_entities
           report_row person_entities "$before"
+          drop_staging person_entities
 
           # 4) No content/entity reference at all — plain passthrough.
           plain_merge trends
           plain_merge trend_reports
 
-          # Drop every staging table now that all children are merged.
+          # Drops the three anchor staging tables (entities, articles,
+          # youtube_videos) kept alive until now for remap joins, plus the
+          # now-empty schema itself.
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DROP SCHEMA staging CASCADE;"
 
           echo "" >> "$REPORT"
+          echo "DB size after this run:" >> "$REPORT"
+          psql "$DATABASE_URL" -tAc "SELECT pg_size_pretty(pg_database_size(current_database()));" >> "$REPORT"
           echo "Sync complete." >> "$REPORT"
 
       - name: Commit result to a run-unique branch
