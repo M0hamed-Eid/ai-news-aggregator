@@ -143,11 +143,21 @@ jobs:
             FROM users u ORDER BY u.id;
           " >> neon-reconciliation-result.txt 2>&1 || echo "(query failed)" >> neon-reconciliation-result.txt
 
-      - name: Commit and push results
+      - name: Commit and push results (retries on concurrent-push conflicts)
         if: always()
         run: |
           git config user.name "neon-reconciliation-bot"
           git config user.email "actions@github.com"
           git add neon-reconciliation-result.txt
           git commit -m "Neon reconciliation results $(date -u +%Y-%m-%dT%H:%M:%SZ)" || echo "nothing to commit"
-          git push
+          for i in 1 2 3 4 5; do
+            if git push; then
+              exit 0
+            fi
+            echo "Push rejected (likely a concurrent commit from another workflow run) -- rebasing and retrying ($i/5)"
+            git fetch origin "$GITHUB_REF_NAME"
+            git rebase "origin/$GITHUB_REF_NAME"
+            sleep 3
+          done
+          echo "::error::Failed to push results after 5 retries"
+          exit 1

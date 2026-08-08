@@ -36,11 +36,21 @@ jobs:
           echo "Table counts in backup (via pg_restore --list):" >> neon-backup-info.txt
           pg_restore --list neon-backup-before-migration.dump | grep "TABLE DATA" | wc -l >> neon-backup-info.txt
 
-      - name: Commit and push backup
+      - name: Commit and push backup (retries on concurrent-push conflicts)
         if: always()
         run: |
           git config user.name "neon-backup-bot"
           git config user.email "actions@github.com"
           git add neon-backup-before-migration.dump neon-backup-info.txt
           git commit -m "Neon backup before migration $(date -u +%Y-%m-%dT%H:%M:%SZ)" || echo "nothing to commit"
-          git push
+          for i in 1 2 3 4 5; do
+            if git push; then
+              exit 0
+            fi
+            echo "Push rejected (likely a concurrent commit from another workflow run) -- rebasing and retrying ($i/5)"
+            git fetch origin "$GITHUB_REF_NAME"
+            git rebase "origin/$GITHUB_REF_NAME"
+            sleep 3
+          done
+          echo "::error::Failed to push backup after 5 retries"
+          exit 1
