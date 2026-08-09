@@ -25,7 +25,6 @@ const DJANGO_PREFIXES = [
 ];
 
 const nextConfig: NextConfig = {
-  output: "standalone",
   typescript: {
     ignoreBuildErrors: true,
   },
