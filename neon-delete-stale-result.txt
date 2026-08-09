@@ -1,0 +1,27 @@
+Neon delete stale accounts — 2026-08-09T06:34:47Z
+
+=== Users before ===
+ id |                 email                  
+----+----------------------------------------
+  1 | eng.mohammedeid2024@gmail.com
+  3 | test-multiuser@example.com
+  4 | me99804@gmail.com
+  5 | legacy-user-test@example.com
+  6 | fresh-signup-test@example.com
+  7 | wizard-view-test@example.com
+  8 | wizard-source-persist-test@example.com
+  9 | changcountrey@gmail.com
+ 29 | mohammedeidabdelmeguid@gmail.com
+(9 rows)
+
+
+=== Deleting non-cascading pipeline-owned rows (digest_log, user_rankings, user_affinities, digest_click_tokens, user_profile_vectors) ===
+DELETE 28
+DELETE 45
+DELETE 68
+DELETE 424
+DELETE 2
+
+=== Deleting users rows (cascades through Django FKs: chat_conversations, saved_items, terms_acceptances, user_events, user_follows, user_profiles, stripe_customers, users_groups, users_user_permissions, django_admin_log) ===
+ERROR:  update or delete on table "users" violates foreign key constraint "user_profiles_user_id_8c5ab5fe_fk_users_id" on table "user_profiles"
+DETAIL:  Key (id)=(7) is still referenced from table "user_profiles".
