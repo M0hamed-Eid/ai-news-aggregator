@@ -1,0 +1,79 @@
+Neon delete stale accounts — 2026-08-09T09:12:46Z
+
+=== Users before ===
+ id |                 email                  
+----+----------------------------------------
+  1 | eng.mohammedeid2024@gmail.com
+  3 | test-multiuser@example.com
+  4 | me99804@gmail.com
+  5 | legacy-user-test@example.com
+  6 | fresh-signup-test@example.com
+  7 | wizard-view-test@example.com
+  8 | wizard-source-persist-test@example.com
+  9 | changcountrey@gmail.com
+ 29 | mohammedeidabdelmeguid@gmail.com
+(9 rows)
+
+
+=== Deleting in dependency order (verified against Neon's actual FK graph, not assumed cascade) ===
+DELETE 0
+DELETE 0
+DELETE 0
+DELETE 5
+DELETE 0
+DELETE 0
+DELETE 1602
+DELETE 0
+DELETE 0
+DELETE 0
+DELETE 5
+DELETE 11
+DELETE 3
+DELETE 0
+DELETE 5
+DELETE 0
+DELETE 45
+DELETE 0
+DELETE 45
+DELETE 0
+
+=== Deleting users rows (every referencing row above is now gone) ===
+DELETE 5
+
+=== Users after ===
+ id |              email               
+----+----------------------------------
+  1 | eng.mohammedeid2024@gmail.com
+  4 | me99804@gmail.com
+  9 | changcountrey@gmail.com
+ 29 | mohammedeidabdelmeguid@gmail.com
+(4 rows)
+
+
+=== Orphan check: any remaining row anywhere referencing the deleted ids? (should be 0 rows) ===
+             t             | count 
+---------------------------+-------
+ chat_messages             |     0
+ chat_conversations        |     0
+ django_admin_log          |     0
+ saved_items               |     0
+ terms_acceptances         |     0
+ user_events               |     0
+ user_follows              |     0
+ users_groups              |     0
+ users_user_permissions    |     0
+ user_digest_settings      |     0
+ user_exclusions           |     0
+ user_interests            |     0
+ user_source_subscriptions |     0
+ user_profiles             |     0
+ stripe_customers          |     0
+ digest_log                |     0
+ user_rankings             |     0
+ user_affinities           |     0
+ digest_click_tokens       |     0
+ user_profile_vectors      |     0
+(20 rows)
+
+
+Done.
