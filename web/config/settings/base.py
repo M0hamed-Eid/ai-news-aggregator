@@ -147,31 +147,41 @@ LOGOUT_REDIRECT_URL = "/"
 # M13 — verification/password-reset emails, via Django's OWN mail
 # infrastructure (separate from the pipeline's Gmail-based EmailSender,
 # app/services/email_sender.py, which sends digest emails from an entirely
-# different process). Reuses the SAME GMAIL_ADDRESS/GMAIL_APP_PASSWORD
-# credentials EmailSender already uses, if present in web/.env, so real
-# mail actually lands in an inbox instead of only printing to the dev
-# server's console. Falls back to the console backend when no credentials
-# are configured — same graceful-degradation discipline as EmailSender's
-# own is_configured check, never crashes on a missing credential.
+# different process).
+#
+# Priority: Resend (HTTP API) > Gmail SMTP > console. Confirmed LIVE on
+# Render (2026-08-09) that Gmail SMTP is unusable there at all -- not a
+# timeout/misconfig, a hard OSError: [Errno 101] Network is unreachable
+# connecting to smtp.gmail.com:465, meaning Render has no outbound route
+# for raw SMTP whatsoever. Resend sends over plain HTTPS instead (see
+# config/email_backends.py), which obviously works since the whole app
+# already runs over HTTPS. Gmail SMTP is kept as the fallback specifically
+# for the Oracle/Caddy deployment path (docs/DEPLOYMENT.md), which has
+# real persistent compute and a normal outbound network with no such
+# platform-level SMTP restriction -- don't rip it out just because Render
+# can't use it.
+RESEND_API_KEY = env("RESEND_API_KEY", default="")
 GMAIL_ADDRESS = env("GMAIL_ADDRESS", default="")
 GMAIL_APP_PASSWORD = env("GMAIL_APP_PASSWORD", default="")
-if GMAIL_ADDRESS and GMAIL_APP_PASSWORD:
+
+if RESEND_API_KEY:
+    EMAIL_BACKEND = "config.email_backends.ResendEmailBackend"
+    # Resend's own sandbox sender, valid with zero domain setup -- works
+    # immediately on signup. Override once a custom domain is verified in
+    # the Resend dashboard (RESEND_FROM_EMAIL="AI Compass <noreply@yourdomain>").
+    DEFAULT_FROM_EMAIL = env("RESEND_FROM_EMAIL", default="AI Compass <onboarding@resend.dev>")
+elif GMAIL_ADDRESS and GMAIL_APP_PASSWORD:
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
     EMAIL_HOST = "smtp.gmail.com"
     EMAIL_PORT = 465
     EMAIL_USE_SSL = True
     EMAIL_HOST_USER = GMAIL_ADDRESS
     EMAIL_HOST_PASSWORD = GMAIL_APP_PASSWORD
-    # Found live on Render (2026-08-09): outbound SMTP connect() just hung
-    # (no timeout, Python's socket default) instead of failing fast --
-    # PaaS platforms commonly block/filter outbound SMTP ports. With
-    # WEB_CONCURRENCY=1 (Render's default here), a hung connect() pins the
-    # ONLY gunicorn worker until gunicorn's own request timeout SIGKILLs
-    # it -- meaning a blocked SMTP port was taking down the ENTIRE backend,
-    # not just the one request. A short timeout makes this fail in seconds
-    # instead of crashing the worker; see PasswordResetRequestAPIView /
-    # send_verification_email for the accompanying try/except so a failed
-    # send degrades to a logged warning, never a 500.
+    # A short timeout so an unreachable/filtered SMTP port fails in
+    # seconds rather than hanging until gunicorn's own request timeout
+    # SIGKILLs the worker -- see PasswordResetRequestAPIView's
+    # accompanying try/except for the other half of this: a failed send
+    # degrades to a logged warning, never a 500.
     EMAIL_TIMEOUT = 10
     # Must be the authenticated Gmail address (or a same-domain alias) —
     # Gmail's own SPF/DKIM will flag or rewrite a From header claiming an
