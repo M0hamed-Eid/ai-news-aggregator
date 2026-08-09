@@ -1,9 +1,13 @@
 # =============================================================================
-# AI News Aggregator — PRODUCTION Docker Compose
+# AI News Aggregator — PRODUCTION Docker Compose (backend only)
 # =============================================================================
-# Runs on the Oracle Cloud "Always Free" VM (see docs/DEPLOYMENT.md). A
-# SEPARATE file from docker/docker-compose.yml (dev) on purpose — the dev
-# compose file stays untouched so local workflows are never disrupted.
+# Runs the Django/Celery backend on a self-managed VM (originally scoped for
+# an Oracle Cloud "Always Free" instance; moved to AWS EC2 after Oracle had
+# no free-tier capacity available — see docs/DEPLOYMENT.md). API-only: the
+# frontend is a separate Vercel deployment, not a container here (see the
+# frontend/ dir's Dockerfile for why it's currently unused). A SEPARATE file
+# from docker/docker-compose.yml (dev) on purpose — the dev compose file
+# stays untouched so local workflows are never disrupted.
 #
 # What's deliberately NOT here, vs. the dev compose file:
 #   - `db` (Postgres) — production Postgres is Neon (managed, external,
@@ -13,9 +17,9 @@
 #
 # What's added, matching README.md's own documented 4-process local dev
 # model (main worker / interactive worker / stt worker / beat, each
-# `--pool=solo` — see README.md:230-269) plus the web app and a reverse
-# proxy:
-#   web, worker-default, worker-interactive, worker-stt, beat, redis, caddy
+# `--pool=solo` — see README.md:230-269) plus the web app, its isolated
+# streaming-chat ASGI process, and a reverse proxy:
+#   web, chat, worker-default, worker-interactive, worker-stt, beat, redis, caddy
 #
 # Usage:
 #   docker compose -f docker/docker-compose.prod.yml up -d --build
@@ -107,27 +111,6 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    networks:
-      - backend
-
-  # ---------------------------------------------------------------------------
-  # M15 — Next.js frontend (Z.ai-generated UI, wired to the real Django/JSON
-  # backend). Own image (../frontend/Dockerfile), standalone Node server
-  # (output: "standalone", frontend/next.config.ts) — same "own image, own
-  # dependency set" convention as `web`/`chat` above. This container never
-  # talks to Postgres/Redis directly, only to `web`'s JSON API surface, and
-  # only ever reached via Caddy: every request that ISN'T one of Django's
-  # existing URL prefixes is routed here instead of `web` (see Caddyfile) —
-  # same-origin from the browser's perspective, so no CORS package exists
-  # anywhere in this app.
-  # ---------------------------------------------------------------------------
-  frontend:
-    build:
-      context: ../frontend
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    depends_on:
-      - web
     networks:
       - backend
 
@@ -238,7 +221,6 @@ services:
     depends_on:
       - web
       - chat
-      - frontend
     networks:
       - backend
 

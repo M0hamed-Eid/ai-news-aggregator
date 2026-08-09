@@ -1,20 +1,52 @@
 # Production Deployment Guide
 
 This is the deployment guide for taking the local dev setup (Docker-based
-Postgres+Redis, Django `web/`, the SQLAlchemy pipeline `app/`) to a real,
-reachable, $0/month production deployment with zero data loss.
+Postgres+Redis, Django `web/`, the SQLAlchemy pipeline `app/`, Next.js
+`frontend/`) to a real, reachable production deployment with zero data loss.
 
-Two paths are documented:
+> **Current status (2026-08-09): the frontend deploys to Vercel; the
+> backend is moving to AWS EC2.** Oracle Cloud's "Always Free" tier had no
+> ARM capacity available when provisioned (a documented, common risk — see
+> Known Limitations), so the backend host changed from the originally
+> planned Oracle VM to an AWS EC2 instance, paid for out of a time-boxed
+> AWS credit rather than staying strictly $0/month. This is a **split-host,
+> cross-origin** architecture now, not the original single-VM/single-domain
+> design: Vercel serves the whole Next.js app shell on its own domain, and
+> the EC2 instance runs Django/Celery as an **API-only** backend on a
+> separate domain, reached cross-origin (see `web/config/settings/prod.py`'s
+> `CORS_ALLOWED_ORIGINS` / `SESSION_COOKIE_SAMESITE="None"`, and
+> `frontend/src/lib/api.ts`'s `NEXT_PUBLIC_API_BASE_URL`). The `frontend`
+> service that used to live in `docker-compose.prod.yml` (and
+> `frontend/Dockerfile`) is stale/unused as a result — see Section 3c.
+>
+> The database migration steps in Section 4 below predate this session's
+> actual production data migration, which instead went through a series of
+> dedicated, tested GitHub Actions workflows
+> (`.github/workflows/neon-content-sync.yml`,
+> `neon-django-migrate.yml`, `neon-add-user29.yml`,
+> `neon-delete-stale-accounts.yml`) built specifically to work around this
+> dev machine's inability to reach Neon's Postgres port directly — each is
+> idempotent (`ON CONFLICT DO NOTHING` / natural-key remapping) and safe to
+> re-run. Section 4's `scripts/*.ps1` approach is still valid for a
+> from-scratch migration; it just isn't what actually happened here.
 
-- **Primary: Oracle Cloud "Always Free" VM + Docker Compose.** Runs this
-  project's full multi-process model (Django, all 3 Celery workers, beat,
-  Redis) persistently and unmodified — the closest possible match to local
-  dev, and the only path that keeps semantic search and "add a source"
-  exactly as synchronous as they are locally.
-- **Fallback: Render free web service + GitHub Actions.** Use this if Oracle
-  provisioning proves impractical (see Known Limitations). No source code
-  changes either way — the fallback documents a real, disclosed limitation
-  instead of redesigning product behavior.
+Three paths are documented:
+
+- **AWS EC2 + Docker Compose (current backend path).** Same Docker Compose
+  stack as the Oracle path below — Oracle's docker-compose.prod.yml file
+  doesn't care which cloud VM it runs on — just provisioned on AWS instead,
+  paired with the frontend on Vercel instead of a `frontend` container. See
+  Section 3c.
+- **Oracle Cloud "Always Free" VM + Docker Compose (original primary,
+  blocked on capacity).** Runs this project's full multi-process model
+  (Django, all 3 Celery workers, beat, Redis, and originally the frontend
+  too) persistently and unmodified on a single VM/domain — the closest
+  possible match to local dev, and the only path that keeps semantic search
+  and "add a source" exactly as synchronous as they are locally. Revisit if
+  Oracle capacity frees up later.
+- **Fallback: Render free web service + GitHub Actions.** Django only, no
+  background workers (pipeline runs via GitHub Actions instead). Use if
+  neither AWS nor Oracle is workable.
 
 Read the architecture rationale in full before deploying: see the approved
 plan this guide implements, summarized in the Known Limitations section
@@ -36,6 +68,33 @@ below and in `.wolf/cerebrum.md`'s 2026-07-19 decision-log entry.
 - Real credentials for: Groq (`GROQ_API_KEY`), Gmail App Password
   (`GMAIL_ADDRESS`/`GMAIL_APP_PASSWORD` — same as local dev), and, if
   billing is wanted live, Stripe test-mode keys.
+
+**AWS EC2 path additionally needs:**
+- An AWS account with billing set up (this path is not free-tier — budget
+  against whatever credit/card is on the account; a `t3.small` running this
+  full stack costs roughly $15-20/month on-demand, well inside a $100
+  credit for a several-week deployment window).
+- An EC2 instance: **Ubuntu 22.04/24.04 LTS, `t3.small` (2GB RAM) minimum**
+  — `t3.micro`'s 1GB will OOM building multiple Docker images back-to-back
+  (worker/beat/web/chat all share the root `Dockerfile`, `web/Dockerfile`
+  separately) plus running redis + 5 Celery-adjacent processes at once. In
+  the EC2 launch wizard: enable "Auto-assign public IP", create/download a
+  new SSH key pair (`.pem`), and open these inbound rules in its security
+  group: **22 (SSH, ideally restricted to your own IP)**, **80 (HTTP, for
+  Let's Encrypt's challenge)**, **443 (HTTPS)**.
+- Docker + the Compose plugin installed on that instance (same as Oracle —
+  `curl -fsSL https://get.docker.com | sh` then `sudo usermod -aG docker
+  $USER` and re-login covers Ubuntu).
+- A domain name pointed at the instance's public IP (an A record), or a
+  free dynamic-DNS hostname (e.g. duckdns.org) — same Let's-Encrypt-needs-
+  public-DNS constraint as the Oracle path below. **This backend domain is
+  separate from the Vercel frontend domain** — e.g. `api.yourapp.com` (or
+  `yourapp.duckdns.org`) for the backend, `yourapp.vercel.app` (or a custom
+  domain attached in Vercel) for the frontend.
+- A Vercel account with `frontend/` connected as its own project (Root
+  Directory setting = `frontend` if the repo root isn't the Next.js app —
+  see Section 3c's Vercel note). `NEXT_PUBLIC_API_BASE_URL` set in Vercel's
+  project env vars to `https://<your-backend-domain>`.
 
 **Primary (Oracle) path additionally needs:**
 - An [Oracle Cloud](https://www.oracle.com/cloud/free/) account. Signup
@@ -129,6 +188,60 @@ databases (Upstash's managed Redis doesn't reliably support multi-DB
 6. Visit `https://<your-app>.onrender.com/healthz/` — expect
    `{"status": "ok"}`.
 
+## 3c. Deploy steps — Current path (AWS EC2 backend + Vercel frontend)
+
+Backend (EC2 — same Docker Compose stack the Oracle path uses, just a
+different VM provider; steps 1-6 below are otherwise identical to Section
+3's Oracle steps):
+
+1. Provision the EC2 instance (see Prerequisites) and point your backend
+   domain's DNS A record at its public IP — do this before step 5, or
+   Caddy's Let's Encrypt challenge will fail.
+2. SSH in: `ssh -i your-key.pem ubuntu@<instance-public-ip>`. Install
+   Docker + the Compose plugin (`curl -fsSL https://get.docker.com | sh`,
+   then `sudo usermod -aG docker $USER` and reconnect).
+3. `git clone` this repository onto the instance.
+4. Copy and fill in the three env files (`.env.prod`, `web/.env.prod`,
+   `docker/.env` — set `SITE_DOMAIN` to your **backend** domain, e.g.
+   `api.yourapp.com`, not the Vercel one). Critically, `web/.env.prod`'s
+   `DJANGO_CORS_ALLOWED_ORIGINS` must include your actual Vercel URL
+   (`https://yourapp.vercel.app` or your custom Vercel domain, full origin
+   including scheme, comma-separated if there's more than one — e.g. a
+   Vercel preview URL alongside the production one), and
+   `DJANGO_ALLOWED_HOSTS`/`DJANGO_CSRF_TRUSTED_ORIGINS` must include the
+   backend domain itself.
+5. Run the database migration (Section 4) — do this before bringing the
+   app up, so it starts with real data already in place. (This project's
+   own Neon data was actually migrated via the GitHub Actions workflows
+   noted in the status callout at the top of this doc, not this section's
+   scripts — either approach reaches the same end state.)
+6. `docker compose -f docker/docker-compose.prod.yml up -d --build` — this
+   now builds/starts only the backend services (`redis`, `web`, `chat`,
+   `worker-default`, `worker-interactive`, `worker-stt`, `beat`, `caddy`;
+   no `frontend` container, see the status callout at the top of this doc).
+   Watch `docker compose -f docker/docker-compose.prod.yml logs -f caddy`
+   until it reports a successful certificate issuance, then visit
+   `https://<your-backend-domain>/healthz/` — expect `{"status": "ok"}`.
+
+Frontend (Vercel):
+
+1. In Vercel: New Project → import this GitHub repo. Since the Next.js app
+   lives in `frontend/`, not the repo root, set **Root Directory** to
+   `frontend` in the project's General settings (this is almost certainly
+   what caused the very first deploy attempt's `NOT_FOUND` error if it
+   wasn't set — Vercel otherwise looks for a Next.js app at the repo root
+   and finds nothing to serve).
+2. Set the `NEXT_PUBLIC_API_BASE_URL` environment variable to
+   `https://<your-backend-domain>` (the EC2/Caddy domain from above, not
+   the Vercel domain itself) in the Vercel project's env var settings, then
+   redeploy so the build picks it up (Next.js inlines `NEXT_PUBLIC_*` vars
+   at build time, not runtime).
+3. Push to `main` (or redeploy manually from the Vercel dashboard) — Vercel
+   auto-builds and serves from `frontend/` going forward.
+4. Visit the Vercel URL — the home page should render with real content
+   (not a 404), and network requests to `/api/*` etc. should resolve to
+   the backend domain, not 404 or CORS-error in the browser console.
+
 ---
 
 ## 4. Database migration (zero data loss)
@@ -209,12 +322,18 @@ fresh target (`CREATE EXTENSION IF NOT EXISTS` + `pg_restore --clean
 
 ## 5. Redeploy after updates
 
-**Oracle path:** push to `main`; `.github/workflows/deploy.yml` SSHes into
-the VM and runs `git pull && docker compose -f docker/docker-compose.prod.yml
-up -d --build` automatically once CI passes. To do it manually:
+**AWS EC2 / Oracle path (same mechanism, cloud-agnostic):** push to `main`;
+`.github/workflows/deploy.yml` SSHes into the instance and runs `git pull &&
+docker compose -f docker/docker-compose.prod.yml up -d --build` automatically
+once CI passes — set its `DEPLOY_HOST`/`DEPLOY_USER`/`DEPLOY_SSH_KEY` repo
+secrets to point at whichever instance you're actually running (EC2's public
+IP + `ubuntu` user + the `.pem` key's contents, for AWS). To do it manually:
 ```
-ssh <user>@<vm-host> "cd ai-news-aggregator && git pull && docker compose -f docker/docker-compose.prod.yml up -d --build"
+ssh <user>@<instance-host> "cd ai-news-aggregator && git pull && docker compose -f docker/docker-compose.prod.yml up -d --build"
 ```
+
+**Vercel (frontend):** push to `main` — Vercel's own native auto-deploy
+picks it up once the project is connected; no extra step.
 
 **Render fallback path:** push to `main` — Render's own native auto-deploy
 picks it up; no extra step.

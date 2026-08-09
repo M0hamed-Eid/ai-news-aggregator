@@ -1,14 +1,18 @@
-name: Deploy (Oracle Cloud primary path)
+name: Deploy (SSH + Docker Compose — Oracle or AWS EC2 backend)
 
-# Only relevant if you're using the primary Oracle Cloud VM deployment path
-# (see docs/DEPLOYMENT.md). If you're on the Render fallback path instead,
-# Render's own native "auto-deploy on push" replaces this entirely -- delete
-# or disable this workflow.
+# Cloud-agnostic: plain SSH + `git pull` + `docker compose up -d --build`
+# against docker-compose.prod.yml, so this works unchanged whether
+# DEPLOY_HOST points at an Oracle Cloud VM or an AWS EC2 instance (see
+# docs/DEPLOYMENT.md's Section 3 vs 3c — same compose file either way,
+# frontend now deploys separately to Vercel). If you're on the Render
+# fallback path instead, Render's own native "auto-deploy on push"
+# replaces this entirely -- delete or disable this workflow.
 #
 # Required repo secrets:
-#   DEPLOY_HOST       - the VM's public IP or hostname
-#   DEPLOY_USER       - SSH user on the VM
-#   DEPLOY_SSH_KEY    - private key for that user (public key installed on the VM)
+#   DEPLOY_HOST       - the instance's public IP or hostname
+#   DEPLOY_USER       - SSH user on the instance (e.g. "ubuntu" on AWS EC2)
+#   DEPLOY_SSH_KEY    - private key for that user (public key installed on the instance;
+#                       on AWS this is the .pem file's contents from the EC2 key pair)
 
 on:
   workflow_run:

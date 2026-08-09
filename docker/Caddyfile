@@ -1,7 +1,14 @@
-# Reverse proxy + automatic HTTPS for the production app.
+# Reverse proxy + automatic HTTPS for the production API backend.
+#
+# API-ONLY since the frontend moved to Vercel (its own separate domain) —
+# this domain now serves Django exclusively (API, admin, static, the
+# handful of server-rendered auth pages) for the AWS-hosted backend, cross-
+# origin from Vercel's domain. See web/config/settings/prod.py's
+# CORS_ALLOWED_ORIGINS / SESSION_COOKIE_SAMESITE="None" for the other half
+# of that split — those settings assume exactly this shape.
 #
 # {$SITE_DOMAIN} — set via the environment (docker-compose.prod.yml's caddy
-# service reads it from the shell, e.g. `SITE_DOMAIN=app.example.com` or a
+# service reads it from the shell, e.g. `SITE_DOMAIN=api.example.com` or a
 # free DDNS hostname such as yourname.duckdns.org — see docs/DEPLOYMENT.md).
 # Caddy requests/renews a Let's Encrypt cert for it automatically; no manual
 # certbot step.
@@ -22,27 +29,15 @@
 		}
 	}
 
-	# M15 — every URL prefix Django still owns (the JSON API surface plus
-	# the handful of surfaces staying server-rendered — admin, static
-	# assets, email-linked password-reset/verification pages). Keep this
-	# list in sync with frontend/next.config.ts's DJANGO_PREFIXES, which
-	# proxies the exact same set in local dev via Next.js rewrites().
-	# Everything NOT matched here (home, search, feed, article/video/entity
-	# detail, sources, people, insights, library, profile, billing,
-	# preferences, onboarding, login/signup, pricing, ops, story clusters,
-	# trending stories — i.e. the whole Z.ai-designed app shell) falls
-	# through to `frontend`. M15 Phase 5 retired the classic (non-API)
-	# apps.news/apps.onboarding template routes entirely — those apps'
-	# real JSON APIs live under /api/news/* and /api/onboarding/*
-	# (already covered by /api/*), so bare /news/* and /onboarding/* are
-	# no longer Django-owned at all.
-	@django_paths path /api/* /admin/* /accounts/* /behavior/* /assistant/* /healthz/* /r/* /static/*
-	handle @django_paths {
-		reverse_proxy web:8000
-	}
-
+	# Everything else goes to Django — this domain is API-only now (the
+	# app shell itself is served from Vercel, a separate domain, and calls
+	# this one cross-origin for /api/*, /accounts/*, /behavior/*, etc.).
+	# No frontend fallback to route to anymore, so unlike the old
+	# @django_paths allowlist, unmatched paths just reach Django directly
+	# and get its own normal 404 instead of silently falling through to a
+	# frontend container that no longer exists here.
 	handle {
-		reverse_proxy frontend:3000
+		reverse_proxy web:8000
 	}
 
 	encode gzip
