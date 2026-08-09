@@ -1,0 +1,10 @@
+Plan update — 2026-08-09T16:57:38Z
+email: mohammedeidabdelmeguid@gmail.com
+action: promote_to_pro
+
+=== resulting row ===
+ id |              email               | plan | plan_expires_at 
+----+----------------------------------+------+-----------------
+ 29 | mohammedeidabdelmeguid@gmail.com | pro  | 
+(1 row)
+
