@@ -40,6 +40,8 @@ services:
         sync: false
       - key: DJANGO_CORS_ALLOWED_ORIGINS
         sync: false
+      - key: FRONTEND_BASE_URL
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: REDIS_URL
@@ -49,6 +51,8 @@ services:
       - key: GMAIL_ADDRESS
         sync: false
       - key: GMAIL_APP_PASSWORD
+        sync: false
+      - key: RESEND_API_KEY
         sync: false
       - key: GROQ_API_KEY
         sync: false

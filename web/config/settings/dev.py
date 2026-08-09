@@ -14,6 +14,14 @@ ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 # split, so prod.py's own CSRF_TRUSTED_ORIGINS (env-driven) is untouched.
 CSRF_TRUSTED_ORIGINS = ["http://localhost:3000"]
 
+# Same split as CSRF_TRUSTED_ORIGINS above: a verify-email/Stripe-redirect
+# link takes the browser straight to Django (:8000), but the actual page
+# for "/", "/login", "/billing" etc. only exists on the Next.js dev server
+# (:3000) — see apps.accounts.views.frontend_redirect. Oracle/Caddy prod
+# doesn't need this (prod.py leaves FRONTEND_BASE_URL empty by default,
+# same-origin relative redirects already correct there).
+FRONTEND_BASE_URL = "http://localhost:3000"
+
 # EMAIL_BACKEND is set in base.py — real Gmail SMTP if GMAIL_ADDRESS/
 # GMAIL_APP_PASSWORD are configured in web/.env, console (prints instead of
 # sending) otherwise. Not overridden here so a real dev environment with

@@ -21,12 +21,12 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.http import HttpResponse, HttpResponseBadRequest
-from django.shortcuts import redirect
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
 from .models import StripeCustomer, User
+from .views import frontend_redirect
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class CheckoutSuccessView(LoginRequiredMixin, View):
 
     def get(self, request, *args, **kwargs):
         messages.success(request, "Thanks! Your upgrade is processing — this usually takes just a few seconds.")
-        return redirect("/billing")
+        return frontend_redirect("/billing")
 
 
 class CheckoutCancelView(LoginRequiredMixin, View):
@@ -62,7 +62,7 @@ class CheckoutCancelView(LoginRequiredMixin, View):
 
     def get(self, request, *args, **kwargs):
         messages.info(request, "Checkout canceled — no changes were made.")
-        return redirect("/pricing")
+        return frontend_redirect("/pricing")
 
 
 # ---------------------------------------------------------------------------

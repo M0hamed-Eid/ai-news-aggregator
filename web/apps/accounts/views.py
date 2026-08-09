@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib import messages
 from django.shortcuts import redirect
 from django.utils.encoding import force_str
@@ -11,6 +12,19 @@ from .models import User
 
 LOGIN_ATTEMPT_LIMIT = 5
 LOGIN_ATTEMPT_WINDOW_SECONDS = 300
+
+
+def frontend_redirect(path: str):
+    """redirect() to a frontend PAGE (as opposed to a Django URL name) —
+    "/", "/login", "/billing", "/pricing", etc. On a split-domain deploy
+    (Vercel+Render) that page only exists on settings.FRONTEND_BASE_URL,
+    NOT on Django's own domain — a bare redirect(path) 404s there (found
+    live, see prod.py's FRONTEND_BASE_URL comment for the real traceback).
+    On the same-origin Oracle/Caddy path and local dev's proxied :3000/:8000
+    split, this still resolves correctly; FRONTEND_BASE_URL is genuinely
+    "" only on Oracle prod, where the relative redirect is already right."""
+    base = getattr(settings, "FRONTEND_BASE_URL", "")
+    return redirect(f"{base}{path}" if base else path)
 
 
 def login_rate_limit_ok(request, email: str) -> bool:
@@ -50,4 +64,4 @@ class VerifyEmailView(View):
         else:
             messages.error(request, "That verification link is invalid or has already been used.")
 
-        return redirect("/" if request.user.is_authenticated else "/login")
+        return frontend_redirect("/" if request.user.is_authenticated else "/login")

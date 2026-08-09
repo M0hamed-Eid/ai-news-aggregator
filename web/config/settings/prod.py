@@ -45,6 +45,18 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 # origins including scheme, e.g. "https://app.example.com,https://example.com".
 CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
 
+# Found live on Render (2026-08-09): VerifyEmailView/CheckoutSuccessView/
+# CheckoutCancelView all did `redirect("/")`/`redirect("/login")`/
+# `redirect("/billing")`/`redirect("/pricing")` — relative paths on
+# DJANGO's own domain, which 404 on a split-domain deploy since Django is
+# API+admin only here (those pages only exist on the Vercel frontend).
+# Confirmed via a real emailed verification link: GET .../verify/... ->
+# 302 to Django's own "/" -> 404. Empty by default (genuine no-op on the
+# same-origin Oracle/Caddy path, where the existing relative redirects
+# are already correct) — set only for the Vercel+Render split. See
+# apps.accounts.views.frontend_redirect, the shared helper both views use.
+FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", default="").rstrip("/")
+
 # No MEDIA_ROOT/MEDIA_URL on purpose — this app has zero file-upload/media
 # features (confirmed via repo-wide grep before writing this deployment
 # plan). Revisit only if a future milestone adds user-uploaded files.
