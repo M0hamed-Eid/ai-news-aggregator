@@ -15,7 +15,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, BigInteger, CheckConstraint, DateTime, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,7 +36,7 @@ class ContentEnrichment(Base):
     )
     technical_depth: Mapped[int] = mapped_column(Integer, nullable=False, comment="1 (accessible) - 5 (expert/research-level)")
 
-    key_points: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, comment="List[str] — 3-5 short bullet takeaways")
+    key_points: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=False, default=list, comment="List[str] — 3-5 short bullet takeaways")
     technical_details: Mapped[str] = mapped_column(Text, nullable=False, default="")
     business_angle: Mapped[str] = mapped_column(Text, nullable=False, default="")
     why_it_matters: Mapped[str] = mapped_column(Text, nullable=False, default="")

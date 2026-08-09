@@ -19,6 +19,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -70,10 +71,10 @@ class Source(Base):
     # Primary key
     # -------------------------------------------------------------------------
     id: Mapped[int] = mapped_column(
-        BigInteger,
+        BigInteger().with_variant(Integer(), "sqlite"),
         primary_key=True,
         autoincrement=True,
-        comment="Auto-incrementing surrogate key",
+        comment="Auto-incrementing surrogate key. SQLite variant is Integer, not BigInteger -- see app/database/models/article.py's id column comment for why.",
     )
 
     # -------------------------------------------------------------------------
@@ -115,7 +116,7 @@ class Source(Base):
     # Adapter configuration
     # -------------------------------------------------------------------------
     config: Mapped[dict] = mapped_column(
-        JSONB,
+        JSON().with_variant(JSONB(), "postgresql"),
         nullable=False,
         default=dict,
         comment="Adapter-specific config blob — e.g. {'categories': [...]} for arxiv, {'feeds': [...]} for rss",

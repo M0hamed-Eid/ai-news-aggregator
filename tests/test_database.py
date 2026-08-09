@@ -22,6 +22,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database.base import Base
 from app.database.models.article import Article
+from app.database.models.source import Source
 from app.database.models.youtube_video import YoutubeVideo
 from app.scrapers.base_scraper import ScrapedArticle
 
@@ -54,6 +55,17 @@ def db_session():
 
     Session = sessionmaker(bind=engine, autocommit=False, autoflush=False)
     session = Session()
+
+    # Article.source has a real FK to sources.key (fk_articles_source) — seed
+    # the two values the test helpers above actually use, or every Article
+    # insert fails FOREIGN KEY constraint failed. Real values, not test-only
+    # ones: both rows exist in the live registry (confirmed via psql), the
+    # class docstring's "deliberately NOT in this registry" note is stale.
+    session.add_all([
+        Source(key="blog_openai", name="OpenAI Blog", category="research", adapter_type="api"),
+        Source(key="blog_anthropic", name="Anthropic Blog", category="research", adapter_type="api"),
+    ])
+    session.commit()
 
     yield session
 

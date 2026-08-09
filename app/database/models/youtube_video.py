@@ -5,6 +5,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     DateTime,
     Index,
@@ -36,9 +37,10 @@ class YoutubeVideo(Base):
     # Primary key
     # -------------------------------------------------------------------------
     id: Mapped[int] = mapped_column(
-        BigInteger,
+        BigInteger().with_variant(Integer(), "sqlite"),
         primary_key=True,
         autoincrement=True,
+        comment="Auto-incrementing surrogate key. SQLite variant is Integer, not BigInteger -- see app/database/models/article.py's id column comment for why.",
     )
 
     # -------------------------------------------------------------------------
@@ -114,7 +116,7 @@ class YoutubeVideo(Base):
     # Deep Media (M12) — chunked chaptered summaries + STT fallback
     # -------------------------------------------------------------------------
     transcript_segments: Mapped[list | None] = mapped_column(
-        JSONB,
+        JSON().with_variant(JSONB(), "postgresql"),
         nullable=True,
         default=None,
         comment="[{start, duration, text}, ...] — per-segment timing, same shape whether sourced from YouTube captions or STT (app/services/stt_service.py). NULL for videos scraped before M12 or still pending transcription (see stt_jobs).",

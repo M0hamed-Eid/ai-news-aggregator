@@ -25,7 +25,7 @@
 
 from datetime import date as date_type, datetime
 
-from sqlalchemy import BigInteger, Date, DateTime, String, UniqueConstraint, func
+from sqlalchemy import JSON, BigInteger, Date, DateTime, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,11 +40,11 @@ class TrendReport(Base):
     week_start_date: Mapped[date_type] = mapped_column(Date, nullable=False, comment="Monday of the covered week (UTC)")
 
     narrative: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list,
+        JSON().with_variant(JSONB(), "postgresql"), nullable=False, default=list,
         comment="List of claim-units shown to users: {headline, body, trend_dimension, trend_key, citations: [{content_type, content_id}, ...]}",
     )
     raw_narrative: Mapped[list | None] = mapped_column(
-        JSONB, nullable=True, default=None,
+        JSON().with_variant(JSONB(), "postgresql"), nullable=True, default=None,
         comment="Pre-grounding-filter LLM output, for spot-check auditing only — never rendered to users",
     )
     narrative_version: Mapped[str] = mapped_column(String(50), nullable=False, comment="Prompt/schema version, same convention as EnrichmentAgent's enrichment_version")

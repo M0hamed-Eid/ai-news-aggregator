@@ -24,7 +24,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Float, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, BigInteger, DateTime, Float, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -62,7 +62,7 @@ class UserRanking(Base):
         comment="Which ranker/scoring-formula version produced this row — lets the eval harness compare versions and a formula change invalidate cleanly",
     )
     features: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, server_default="{}",
+        JSON().with_variant(JSONB(), "postgresql"), nullable=False, server_default="{}",
         comment="Exact per-item scoring feature snapshot (interest/topic match, quality score, freshness, source affinity, novelty penalty, MMR-selected flag, exploration-slice flag) — the eval harness and any future learned ranker train on this, not just relevance_score",
     )
 

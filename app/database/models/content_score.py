@@ -13,7 +13,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Float, String, UniqueConstraint, func
+from sqlalchemy import JSON, BigInteger, DateTime, Float, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,7 +31,7 @@ class ContentScore(Base):
     score: Mapped[float] = mapped_column(Float, nullable=False)
     score_version: Mapped[str] = mapped_column(String(50), nullable=False)
     features: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict,
+        JSON().with_variant(JSONB(), "postgresql"), nullable=False, default=dict,
         comment="Exact feature vector that produced `score` — the point of this table per Principle 7, not just the score itself",
     )
 

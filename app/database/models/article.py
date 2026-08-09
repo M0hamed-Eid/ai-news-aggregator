@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKeyConstraint,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -52,10 +53,10 @@ class Article(Base):
     # Primary key
     # -------------------------------------------------------------------------
     id: Mapped[int] = mapped_column(
-        BigInteger,
+        BigInteger().with_variant(Integer(), "sqlite"),
         primary_key=True,
         autoincrement=True,
-        comment="Auto-incrementing surrogate key",
+        comment="Auto-incrementing surrogate key. SQLite variant is Integer, not BigInteger: SQLite's ROWID-alias autoincrement only kicks in for a column whose declared type affinity is exactly INTEGER (tests use in-memory SQLite — see tests/test_database.py) -- production Postgres is unaffected, still genuinely BIGINT.",
     )
 
     # -------------------------------------------------------------------------
