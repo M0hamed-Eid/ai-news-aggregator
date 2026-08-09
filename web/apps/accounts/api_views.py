@@ -448,11 +448,23 @@ class PasswordResetRequestAPIView(View):
 
         form = BootstrapPasswordResetForm(data={"email": payload.get("email", "")})
         if form.is_valid():
-            form.save(
-                request=request,
-                subject_template_name="registration/password_reset_subject.txt",
-                email_template_name="registration/password_reset_email.html",
-            )
+            # Unlike send_verification_email() (email_verification.py),
+            # Django's own PasswordResetForm.save() has no built-in
+            # try/except -- a real SMTP failure (found live on Render: a
+            # blocked/filtered outbound port hangs until EMAIL_TIMEOUT,
+            # see base.py's GMAIL_* block) would otherwise propagate as an
+            # unhandled 500, which also defeats this view's whole point of
+            # never revealing whether the address has an account (a 500
+            # vs. 200 IS a disclosure signal). Logged, never surfaced to
+            # the client -- the response is {"ok": true} either way.
+            try:
+                form.save(
+                    request=request,
+                    subject_template_name="registration/password_reset_subject.txt",
+                    email_template_name="registration/password_reset_email.html",
+                )
+            except Exception:
+                logger.warning("PasswordResetRequestAPIView: send failed for a submitted address", exc_info=True)
         return JsonResponse({"ok": True})
 
 

@@ -162,6 +162,17 @@ if GMAIL_ADDRESS and GMAIL_APP_PASSWORD:
     EMAIL_USE_SSL = True
     EMAIL_HOST_USER = GMAIL_ADDRESS
     EMAIL_HOST_PASSWORD = GMAIL_APP_PASSWORD
+    # Found live on Render (2026-08-09): outbound SMTP connect() just hung
+    # (no timeout, Python's socket default) instead of failing fast --
+    # PaaS platforms commonly block/filter outbound SMTP ports. With
+    # WEB_CONCURRENCY=1 (Render's default here), a hung connect() pins the
+    # ONLY gunicorn worker until gunicorn's own request timeout SIGKILLs
+    # it -- meaning a blocked SMTP port was taking down the ENTIRE backend,
+    # not just the one request. A short timeout makes this fail in seconds
+    # instead of crashing the worker; see PasswordResetRequestAPIView /
+    # send_verification_email for the accompanying try/except so a failed
+    # send degrades to a logged warning, never a 500.
+    EMAIL_TIMEOUT = 10
     # Must be the authenticated Gmail address (or a same-domain alias) —
     # Gmail's own SPF/DKIM will flag or rewrite a From header claiming an
     # unrelated domain (e.g. "noreply@aicompass.local") sent through its SMTP.
