@@ -30,6 +30,7 @@ import logging
 from django.contrib.auth import login, logout
 from django.contrib.auth import authenticate
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.middleware.csrf import get_token
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -47,9 +48,20 @@ from .views import login_rate_limit_ok
 logger = logging.getLogger(__name__)
 
 
-def _session_payload(user) -> dict:
+def _session_payload(request) -> dict:
+    # M16 split-domain fix — the Vercel frontend's JS can never read a
+    # csrftoken cookie Django sets (it's scoped to the Render domain, not
+    # vercel.app; cross-site cookie ATTACHMENT on outgoing fetches works
+    # fine via credentials:'include'+SameSite=None, but document.cookie on
+    # the Vercel page structurally cannot see a cookie set for a different
+    # registrable domain). get_token(request) both returns the current
+    # token value (so the frontend can cache it and echo it back as
+    # X-CSRFToken on every mutating call — see frontend/src/lib/api.ts's
+    # setCsrfToken) and marks the cookie for (harmless, unused) refresh.
+    user = request.user
+    csrf_token = get_token(request)
     if not user.is_authenticated:
-        return {"isAuthenticated": False, "user": None, "entitlements": {}}
+        return {"isAuthenticated": False, "user": None, "entitlements": {}, "csrfToken": csrf_token}
 
     # M16 — has this user accepted the CURRENT terms/privacy version? Only
     # the latest acceptance row matters here (TermsAcceptance is
@@ -80,6 +92,7 @@ def _session_payload(user) -> dict:
         "needsTermsAcceptance": needs_terms_acceptance,
         "termsVersion": CURRENT_TERMS_VERSION,
         "privacyVersion": CURRENT_PRIVACY_VERSION,
+        "csrfToken": csrf_token,
     }
 
 
@@ -94,7 +107,7 @@ def _parse_json_body(request):
 class SessionView(View):
 
     def get(self, request, *args, **kwargs):
-        return JsonResponse(_session_payload(request.user))
+        return JsonResponse(_session_payload(request))
 
 
 class LoginAPIView(View):
@@ -120,7 +133,7 @@ class LoginAPIView(View):
             return JsonResponse({"error": "Incorrect email or password."}, status=400)
 
         login(request, user)
-        return JsonResponse(_session_payload(user))
+        return JsonResponse(_session_payload(request))
 
 
 class SignupAPIView(View):
@@ -167,7 +180,7 @@ class SignupAPIView(View):
         )
         login(request, user)
         send_verification_email(user, request)
-        return JsonResponse(_session_payload(user), status=201)
+        return JsonResponse(_session_payload(request), status=201)
 
 
 class AcceptTermsAPIView(LoginRequiredMixin, View):
@@ -183,7 +196,7 @@ class AcceptTermsAPIView(LoginRequiredMixin, View):
         TermsAcceptance.objects.create(
             user=request.user, terms_version=CURRENT_TERMS_VERSION, privacy_policy_version=CURRENT_PRIVACY_VERSION,
         )
-        return JsonResponse(_session_payload(request.user))
+        return JsonResponse(_session_payload(request))
 
 
 class LogoutAPIView(View):
@@ -192,7 +205,7 @@ class LogoutAPIView(View):
 
     def post(self, request, *args, **kwargs):
         logout(request)
-        return JsonResponse(_session_payload(request.user))
+        return JsonResponse(_session_payload(request))
 
 
 def _user_state_payload(user) -> dict:

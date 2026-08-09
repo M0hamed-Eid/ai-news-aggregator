@@ -20,11 +20,30 @@ export function apiUrl(path: string): string {
   return API_BASE_URL ? `${API_BASE_URL}${path}` : path;
 }
 
+// M16 split-domain fix — on the Vercel+Render split, the csrftoken cookie
+// Django sets is scoped to the Render domain, so document.cookie on a
+// vercel.app page can never read it (cross-site cookie ATTACHMENT on
+// outgoing fetches still works fine via credentials:'include'+SameSite=
+// None; this is purely about JS being unable to READ a cookie set for a
+// different registrable domain). SessionHydrator.tsx caches the token
+// value from GET /api/session/'s JSON body (see SessionResponse.csrfToken,
+// web/apps/accounts/api_views.py::_session_payload) via setCsrfToken() the
+// moment the app loads, so this override is populated before any mutating
+// request could plausibly fire. Falls back to the cookie read for the
+// same-origin Oracle/local-dev path, where it works today and needs no
+// change.
+let csrfTokenOverride: string | null = null;
+
+export function setCsrfToken(token: string | null): void {
+  csrfTokenOverride = token;
+}
+
 // Exported (not just used internally) so assistant-stream.ts's raw
 // fetch()+ReadableStream SSE call — which can't go through the request()
 // wrapper below, since that assumes a JSON response — can still send the
 // same X-CSRFToken header every other mutating request does.
 export function getCsrfToken(): string {
+  if (csrfTokenOverride) return csrfTokenOverride;
   if (typeof document === 'undefined') return '';
   const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : '';
@@ -71,6 +90,15 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const contentType = res.headers.get('content-type') || '';
   const data = contentType.includes('application/json') ? await res.json().catch(() => null) : null;
 
+  // Every endpoint that returns a session-shaped payload (session/login/
+  // signup/logout/accept-terms — see _session_payload) carries a fresh
+  // csrfToken; opportunistically refresh the in-memory override any time
+  // one shows up, so the token used for the NEXT mutating call is never
+  // stale relative to the one Django most recently issued.
+  if (data && typeof data === 'object' && typeof (data as { csrfToken?: unknown }).csrfToken === 'string') {
+    setCsrfToken((data as { csrfToken: string }).csrfToken);
+  }
+
   if (!res.ok) {
     const message = (data && typeof data === 'object' && 'error' in data && String((data as { error: unknown }).error)) || res.statusText;
     throw new ApiError(res.status, data, message);
@@ -101,6 +129,7 @@ export interface SessionResponse {
   isAuthenticated: boolean;
   user: SessionUser | null;
   entitlements: Record<string, boolean>;
+  csrfToken: string;
 }
 
 export function getSession(): Promise<SessionResponse> {
