@@ -1,0 +1,44 @@
+Neon database health check — 2026-08-10T10:11:10Z
+
+=== Overall database size ===
+ total_size |   bytes   
+------------+-----------
+ 313 MB     | 327688192
+(1 row)
+
+
+=== Top 25 tables by total size (table + indexes + toast) ===
+        table_name         | total_size | table_size | indexes_toast_size 
+---------------------------+------------+------------+--------------------
+ rag_chunks                | 165 MB     | 38 MB      | 127 MB
+ trends                    | 36 MB      | 7512 kB    | 29 MB
+ articles                  | 28 MB      | 20 MB      | 8392 kB
+ embeddings                | 27 MB      | 25 MB      | 2056 kB
+ content_enrichment        | 13 MB      | 12 MB      | 1128 kB
+ content_scores            | 10 MB      | 8544 kB    | 1704 kB
+ content_topics            | 7088 kB    | 2376 kB    | 4712 kB
+ content_entities          | 6752 kB    | 2384 kB    | 4368 kB
+ entities                  | 3200 kB    | 1488 kB    | 1712 kB
+ youtube_videos            | 2784 kB    | 160 kB     | 2624 kB
+ user_events               | 720 kB     | 360 kB     | 360 kB
+ digest_click_tokens       | 312 kB     | 120 kB     | 192 kB
+ user_rankings             | 176 kB     | 88 kB      | 88 kB
+ sources                   | 168 kB     | 24 kB      | 144 kB
+ user_affinities           | 160 kB     | 40 kB      | 120 kB
+ content_chunks            | 120 kB     | 40 kB      | 80 kB
+ django_session            | 104 kB     | 24 kB      | 80 kB
+ auth_permission           | 88 kB      | 16 kB      | 72 kB
+ content_cluster_members   | 88 kB      | 8192 bytes | 80 kB
+ user_profile_vectors      | 80 kB      | 16 kB      | 64 kB
+ interests                 | 72 kB      | 8192 bytes | 64 kB
+ user_interests            | 72 kB      | 8192 bytes | 64 kB
+ user_source_subscriptions | 72 kB      | 8192 bytes | 64 kB
+ personas                  | 64 kB      | 8192 bytes | 56 kB
+ users                     | 64 kB      | 8192 bytes | 56 kB
+(25 rows)
+
+
+=== Top 15 largest individual indexes ===
+ERROR:  column reference "relname" is ambiguous
+LINE 4:     relname AS table_name,
+            ^
