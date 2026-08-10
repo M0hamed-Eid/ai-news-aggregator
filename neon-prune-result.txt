@@ -1,0 +1,4 @@
+Neon prune old content — 2026-08-10T13:45:26Z
+
+DB size: 314M (328712192 bytes) — threshold: 450 MiB
+Under threshold, nothing to do.
