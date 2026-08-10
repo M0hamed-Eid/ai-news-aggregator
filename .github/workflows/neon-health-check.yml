@@ -58,10 +58,9 @@ jobs:
             SELECT
               indexrelname AS index_name,
               relname AS table_name,
-              pg_size_pretty(pg_relation_size(i.indexrelid)) AS index_size
-            FROM pg_stat_user_indexes i
-            JOIN pg_class c ON c.oid = i.relid
-            ORDER BY pg_relation_size(i.indexrelid) DESC
+              pg_size_pretty(pg_relation_size(indexrelid)) AS index_size
+            FROM pg_stat_user_indexes
+            ORDER BY pg_relation_size(indexrelid) DESC
             LIMIT 15;
           " >> "$REPORT" 2>&1
 
