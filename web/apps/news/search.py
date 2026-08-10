@@ -37,7 +37,21 @@ _celery_client = Celery(broker=settings.CELERY_BROKER_URL, backend=settings.CELE
 
 def _embed_query(query: str):
     cache_key = _CACHE_KEY_PREFIX + query.strip().lower()
-    cached = cache.get(cache_key)
+
+    # Found live on Render (2026-08-09): the cache read was OUTSIDE this
+    # try/except, so an unreachable cache backend (REDIS_URL unset — see
+    # apps.behavior.ratelimit's identical "Redis unavailable, failing
+    # open" precedent) raised before ever reaching the "worker unavailable"
+    # fallback below, 500ing the whole search request instead of degrading
+    # to keyword search as designed. Same discipline as ratelimit.py: any
+    # cache-layer failure fails open (treated as a cache miss), not a hard
+    # error — this function's whole contract is "return None on ANY
+    # reason semantic search can't run right now."
+    try:
+        cached = cache.get(cache_key)
+    except Exception as exc:
+        logger.warning("semantic search: cache read failed — %s", exc)
+        cached = None
     if cached is not None:
         return cached
 
@@ -48,7 +62,10 @@ def _embed_query(query: str):
         logger.warning("semantic search: query embedding failed/timed out — %s", exc)
         return None
 
-    cache.set(cache_key, vector, _CACHE_TTL_SECONDS)
+    try:
+        cache.set(cache_key, vector, _CACHE_TTL_SECONDS)
+    except Exception as exc:
+        logger.warning("semantic search: cache write failed — %s", exc)
     return vector
 
 
