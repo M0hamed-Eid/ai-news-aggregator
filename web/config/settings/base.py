@@ -149,22 +149,39 @@ LOGOUT_REDIRECT_URL = "/"
 # app/services/email_sender.py, which sends digest emails from an entirely
 # different process).
 #
-# Priority: Resend (HTTP API) > Gmail SMTP > console. Confirmed LIVE on
-# Render (2026-08-09) that Gmail SMTP is unusable there at all -- not a
-# timeout/misconfig, a hard OSError: [Errno 101] Network is unreachable
-# connecting to smtp.gmail.com:465, meaning Render has no outbound route
-# for raw SMTP whatsoever. Resend sends over plain HTTPS instead (see
-# config/email_backends.py), which obviously works since the whole app
-# already runs over HTTPS. Gmail SMTP is kept as the fallback specifically
-# for the Oracle/Caddy deployment path (docs/DEPLOYMENT.md), which has
-# real persistent compute and a normal outbound network with no such
-# platform-level SMTP restriction -- don't rip it out just because Render
-# can't use it.
+# Priority: Gmail API (OAuth) > Resend (HTTP API) > Gmail SMTP > console.
+# Confirmed LIVE on Render (2026-08-09) that Gmail SMTP is unusable there
+# at all -- not a timeout/misconfig, a hard OSError: [Errno 101] Network
+# is unreachable connecting to smtp.gmail.com:465, meaning Render has no
+# outbound route for raw SMTP whatsoever. Resend and the Gmail API both
+# send over plain HTTPS instead (see config/email_backends.py), which
+# obviously works since the whole app already runs over HTTPS.
+#
+# Gmail API ranks above Resend: found live during the 2026-08-10 QA pass
+# that Resend's sandbox mode (no verified domain, and buying one was
+# declined) only delivers to the account owner's own exact address --
+# every other real signup got no email at all. An OAuth-authorized Gmail
+# account can send to any recipient with zero domain-verification step,
+# at the cost of a one-time OAuth consent flow instead of DNS records --
+# see scripts/get_gmail_refresh_token.py for that one-time setup.
+#
+# Gmail SMTP is kept as the fallback specifically for the Oracle/Caddy
+# deployment path (docs/DEPLOYMENT.md), which has real persistent compute
+# and a normal outbound network with no such platform-level SMTP
+# restriction -- don't rip it out just because Render can't use it.
+GMAIL_OAUTH_CLIENT_ID = env("GMAIL_OAUTH_CLIENT_ID", default="")
+GMAIL_OAUTH_CLIENT_SECRET = env("GMAIL_OAUTH_CLIENT_SECRET", default="")
+GMAIL_OAUTH_REFRESH_TOKEN = env("GMAIL_OAUTH_REFRESH_TOKEN", default="")
 RESEND_API_KEY = env("RESEND_API_KEY", default="")
 GMAIL_ADDRESS = env("GMAIL_ADDRESS", default="")
 GMAIL_APP_PASSWORD = env("GMAIL_APP_PASSWORD", default="")
 
-if RESEND_API_KEY:
+if GMAIL_OAUTH_CLIENT_ID and GMAIL_OAUTH_CLIENT_SECRET and GMAIL_OAUTH_REFRESH_TOKEN and GMAIL_ADDRESS:
+    EMAIL_BACKEND = "config.email_backends.GmailAPIEmailBackend"
+    # Must be the Gmail address the OAuth consent was granted for --
+    # same SPF/DKIM constraint as the SMTP branch below.
+    DEFAULT_FROM_EMAIL = f"AI Compass <{GMAIL_ADDRESS}>"
+elif RESEND_API_KEY:
     EMAIL_BACKEND = "config.email_backends.ResendEmailBackend"
     # Resend's own sandbox sender, valid with zero domain setup -- works
     # immediately on signup. Override once a custom domain is verified in
