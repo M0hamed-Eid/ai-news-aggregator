@@ -60,11 +60,26 @@ def get_llm_client_and_model(task: str):
     # auth failure — every call site here already just does
     # `self._client.chat.completions.create(...)`, which GroqKeyManager
     # also exposes, so no agent needed to change. Falls back to a single
-    # plain Groq client (identical to before this existed) when only
-    # GROQ_API_KEY is set, so single-key deployments are unaffected.
+    # plain Groq client when only ONE key is configured (either GROQ_API_KEY
+    # alone, or exactly GROQ_API_KEY_1 with no _2/_3).
+    #
+    # Found live during a production QA pass (2026-08-10): this single-key
+    # branch used to re-read os.environ["GROQ_API_KEY"] directly instead of
+    # using keys[0] -- correct only when the BARE var happens to be set, but
+    # both Render and the GitHub Actions pipeline are configured with ONLY
+    # GROQ_API_KEY_1 (no bare GROQ_API_KEY), so os.environ["GROQ_API_KEY"]
+    # silently resolved to "" there. Confirmed via a real 2h9m scheduled-
+    # pipeline run: every single LLM call failed with
+    # httpcore.LocalProtocolError: Illegal header value b'Bearer ' (an empty
+    # key), meaning EnrichmentAgent/EmailAgent/TrendNarrativeAgent had been
+    # silently producing zero output on every GitHub Actions run since
+    # GROQ_API_KEY_1 replaced the bare key. keys[0] is always the correct
+    # value here regardless of which env var name it came from.
     model = _GROQ_MODELS.get(task, "llama-3.1-8b-instant")
     keys = load_groq_keys()
+    if not keys:
+        raise ValueError("No Groq API key configured — set GROQ_API_KEY or GROQ_API_KEY_1.")
     if len(keys) > 1:
         return GroqKeyManager(keys), model
-    client = Groq(api_key=os.environ["GROQ_API_KEY"])
+    client = Groq(api_key=keys[0])
     return client, model

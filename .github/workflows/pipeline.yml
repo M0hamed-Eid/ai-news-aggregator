@@ -73,6 +73,17 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --no-dev
 
+      - name: Install Playwright browser (Anthropic blog scraper)
+        # Found live during a production QA pass (2026-08-10): the blog
+        # scraper's Playwright-based Anthropic feed silently returned 0
+        # articles on every scheduled run -- "BrowserType.launch: Executable
+        # doesn't exist" -- because `uv sync` installs the playwright PYTHON
+        # package (declared in pyproject.toml) but never downloads the
+        # actual browser binary. Caught and logged, not a hard failure, so
+        # nothing else in the pipeline broke -- but Anthropic's blog has
+        # effectively never been scraped via this path.
+        run: uv run playwright install --with-deps chromium
+
       - name: Determine which job to run
         id: which
         run: |
