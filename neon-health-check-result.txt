@@ -1,0 +1,114 @@
+Neon database health check — 2026-08-10T11:16:59Z
+
+=== Overall database size ===
+ total_size |   bytes   
+------------+-----------
+ 313 MB     | 327720960
+(1 row)
+
+
+=== Top 25 tables by total size (table + indexes + toast) ===
+        table_name         | total_size | table_size | indexes_toast_size 
+---------------------------+------------+------------+--------------------
+ rag_chunks                | 165 MB     | 38 MB      | 127 MB
+ trends                    | 36 MB      | 7512 kB    | 29 MB
+ articles                  | 28 MB      | 20 MB      | 8392 kB
+ embeddings                | 27 MB      | 25 MB      | 2056 kB
+ content_enrichment        | 13 MB      | 12 MB      | 1128 kB
+ content_scores            | 10 MB      | 8544 kB    | 1704 kB
+ content_topics            | 7088 kB    | 2376 kB    | 4712 kB
+ content_entities          | 6752 kB    | 2384 kB    | 4368 kB
+ entities                  | 3200 kB    | 1488 kB    | 1712 kB
+ youtube_videos            | 2784 kB    | 160 kB     | 2624 kB
+ user_events               | 720 kB     | 360 kB     | 360 kB
+ digest_click_tokens       | 312 kB     | 120 kB     | 192 kB
+ user_rankings             | 176 kB     | 88 kB      | 88 kB
+ sources                   | 168 kB     | 24 kB      | 144 kB
+ user_affinities           | 160 kB     | 40 kB      | 120 kB
+ content_chunks            | 120 kB     | 40 kB      | 80 kB
+ django_session            | 104 kB     | 24 kB      | 80 kB
+ auth_permission           | 88 kB      | 16 kB      | 72 kB
+ content_cluster_members   | 88 kB      | 8192 bytes | 80 kB
+ user_profile_vectors      | 80 kB      | 16 kB      | 64 kB
+ interests                 | 72 kB      | 8192 bytes | 64 kB
+ user_interests            | 72 kB      | 8192 bytes | 64 kB
+ user_source_subscriptions | 72 kB      | 8192 bytes | 64 kB
+ personas                  | 64 kB      | 8192 bytes | 56 kB
+ users                     | 64 kB      | 8192 bytes | 56 kB
+(25 rows)
+
+
+=== Top 15 largest individual indexes ===
+          index_name          |    table_name    | index_size 
+------------------------------+------------------+------------
+ ix_rag_chunks_embedding_hnsw | rag_chunks       | 71 MB
+ uq_trends_dimension_key_date | trends           | 10 MB
+ ix_trends_dimension_key_date | trends           | 10 MB
+ trends_pkey                  | trends           | 7456 kB
+ uq_content_topic             | content_topics   | 2320 kB
+ uq_rag_chunks_content_index  | rag_chunks       | 2200 kB
+ uq_content_entity            | content_entities | 1760 kB
+ ix_trends_date_is_trending   | trends           | 1624 kB
+ uq_articles_url              | articles         | 1608 kB
+ ix_content_topics_content    | content_topics   | 1240 kB
+ uq_entity_name_type          | entities         | 1184 kB
+ ix_rag_chunks_content        | rag_chunks       | 1104 kB
+ uq_content_score             | content_scores   | 944 kB
+ ix_content_entities_content  | content_entities | 904 kB
+ ix_content_entities_entity   | content_entities | 864 kB
+(15 rows)
+
+
+=== Row counts, major content/vector tables ===
+            t            | count 
+-------------------------+-------
+ articles                | 16312
+ content_chunks          |    77
+ content_cluster_members |    26
+ content_enrichment      | 14668
+ content_entities        | 35694
+ content_scores          | 16063
+ content_topics          | 35569
+ digest_click_tokens     |   990
+ embeddings              | 16047
+ rag_chunks              | 37391
+ saved_items             |    38
+ user_events             |  3431
+ user_rankings           |    50
+ users                   |     5
+ youtube_videos          |   197
+(15 rows)
+
+
+=== pgvector extension + vector column info ===
+ extname | extversion 
+---------+------------
+ vector  | 0.8.0
+(1 row)
+
+      table_name      | column_name | udt_name 
+----------------------+-------------+----------
+ rag_chunks           | embedding   | vector
+ embeddings           | embedding   | vector
+ user_profile_vectors | vector      | vector
+(3 rows)
+
+
+=== Oldest and newest content (staleness check) ===
+       t        |         oldest         |         newest         
+----------------+------------------------+------------------------
+ articles       | 2026-05-25 00:00:00+00 | 2026-08-10 07:26:15+00
+ youtube_videos | 2026-05-26 14:09:43+00 | 2026-08-07 17:25:00+00
+(2 rows)
+
+
+=== Active connections (current query's own connection excluded) ===
+ active_connections |        state        
+--------------------+---------------------
+                  1 | active
+                  1 | idle in transaction
+(2 rows)
+
+
+=== Neon free tier limits, for reference ===
+512 MB storage cap. neon-prune-old-content.yml auto-prunes when over 450MB.
