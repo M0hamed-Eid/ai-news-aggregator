@@ -1,7 +1,7 @@
 name: Promote or downgrade a user's plan (manual, by email)
 
 # Manual admin tool: type an email, pick promote/downgrade, run. Directly
-# sets users.plan on Neon -- same one field Stripe's own webhook writes
+# sets users.plan -- same one field Stripe's own webhook writes
 # (apps.accounts.billing.StripeWebhookView), so every existing entitlement
 # check (apps.accounts.entitlements.user_can) picks it up with zero other
 # changes. plan_expires_at is always cleared to NULL on promote, meaning
@@ -9,9 +9,14 @@ name: Promote or downgrade a user's plan (manual, by email)
 # plan_expires_at IS SET and in the past) -- a manually-granted Pro grant
 # is permanent until manually downgraded, not time-boxed.
 #
-# Mirrors this repo's existing one-off-account-op pattern (see
-# neon-verify-user29.yml / neon-add-user29.yml): workflow_dispatch only,
-# psql + DATABASE_URL secret, no new dependencies.
+# [Updated after the M17 move off Neon to self-hosted Postgres on AWS EC2]
+# Postgres is no longer reachable directly from a GitHub-hosted runner (it's
+# only exposed on the EC2 instance's internal Docker network, deliberately
+# not on a public port). Instead this SSHes into the EC2 box and runs a
+# FORCED COMMAND (~ubuntu/promote_to_pro.sh, restricted via authorized_keys'
+# command= directive to a dedicated key that can do nothing else) which
+# execs into the postgres container itself. EC2_SSH_KEY/EC2_HOST are new
+# secrets; DATABASE_URL is no longer used by this workflow.
 
 on:
   workflow_dispatch:
@@ -36,15 +41,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install postgresql-client 16
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends postgresql-client-16
-          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
-
-      - name: Update plan
+      - name: Update plan (over SSH, forced command on the EC2 box)
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
           EMAIL: ${{ github.event.inputs.email }}
           ACTION: ${{ github.event.inputs.action }}
         run: |
@@ -55,27 +55,22 @@ jobs:
           echo "action: $ACTION" >> "$REPORT"
           echo "" >> "$REPORT"
 
-          exists=$(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM users WHERE lower(email)=lower('$EMAIL');")
-          if [ "$exists" -eq 0 ]; then
-            echo "No user found with this email. Nothing changed." | tee -a "$REPORT"
-            exit 1
-          fi
+          install -m 600 -D /dev/null ~/.ssh/id_ed25519
+          echo "$EC2_SSH_KEY" > ~/.ssh/id_ed25519
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
-          if [ "$ACTION" = "promote_to_pro" ]; then
-            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "
-              UPDATE users SET plan='pro', plan_expires_at=NULL
-              WHERE lower(email)=lower('$EMAIL');
-            "
-          else
-            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "
-              UPDATE users SET plan='free', plan_expires_at=NULL
-              WHERE lower(email)=lower('$EMAIL');
-            "
-          fi
-
-          echo "=== resulting row ===" >> "$REPORT"
-          psql "$DATABASE_URL" -c "SELECT id, email, plan, plan_expires_at FROM users WHERE lower(email)=lower('$EMAIL');" >> "$REPORT" 2>&1
+          # The forced command on the server side ignores anything except
+          # the literal "<email> <action>" string here -- see
+          # promote_to_pro.sh's own comment for what it actually runs.
+          # PIPESTATUS[0] (ssh's own exit code), not tee's, decides pass/fail
+          # -- otherwise a "user not found" (ssh exits 1) would still read
+          # as a green run, since tee itself always exits 0.
+          set +e
+          ssh -i ~/.ssh/id_ed25519 "ubuntu@$EC2_HOST" "$EMAIL $ACTION" | tee -a "$REPORT"
+          SSH_STATUS=${PIPESTATUS[0]}
+          set -e
           cat "$REPORT"
+          exit "$SSH_STATUS"
 
       - name: Commit result to a run-unique branch
         if: always()
