@@ -1,19 +1,22 @@
-# Reverse proxy + automatic HTTPS for the production API backend.
+# Reverse proxy for the production API backend.
 #
-# API-ONLY since the frontend moved to Vercel (its own separate domain) —
-# this domain now serves Django exclusively (API, admin, static, the
-# handful of server-rendered auth pages) for the AWS-hosted backend, cross-
-# origin from Vercel's domain. See web/config/settings/prod.py's
-# CORS_ALLOWED_ORIGINS / SESSION_COOKIE_SAMESITE="None" for the other half
-# of that split — those settings assume exactly this shape.
+# API-ONLY — the frontend is on Vercel (a separate domain), and Vercel's own
+# Next.js server proxies API calls to this backend server-side (see
+# frontend/next.config.ts's rewrites() and BACKEND_ORIGIN). Because the
+# browser only ever talks to Vercel's HTTPS domain — never this IP directly
+# — this backend deliberately runs PLAIN HTTP, no domain, no Let's Encrypt.
+# (An earlier version of this file used a real domain + automatic HTTPS;
+# dropped per an explicit user decision to avoid even a free DDNS domain.
+# Automatic HTTPS requires a real domain name — Let's Encrypt cannot issue a
+# certificate for a bare IP — so serving this IP directly to a browser would
+# mean either no HTTPS at all, which Vercel's HTTPS page would refuse to
+# call [mixed content], or a self-signed cert, which browsers reject outright.
+# The Vercel-side proxy sidesteps both: the browser never sees this origin.)
 #
-# {$SITE_DOMAIN} — set via the environment (docker-compose.prod.yml's caddy
-# service reads it from the shell, e.g. `SITE_DOMAIN=api.example.com` or a
-# free DDNS hostname such as yourname.duckdns.org — see docs/DEPLOYMENT.md).
-# Caddy requests/renews a Let's Encrypt cert for it automatically; no manual
-# certbot step.
+# `:80` — listen on plain HTTP, any hostname/IP. No {$SITE_DOMAIN}, no TLS
+# directives; Caddy makes zero outbound ACME calls in this mode.
 
-{$SITE_DOMAIN} {
+:80 {
 	# M14 Phase D — streaming chat responses get their OWN route, routed to
 	# the isolated `chat` service (uvicorn/ASGI, docker-compose.prod.yml)
 	# instead of `web` (gunicorn/WSGI, 2 sync workers — a long-lived stream

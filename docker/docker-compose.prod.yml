@@ -10,16 +10,19 @@
 # stays untouched so local workflows are never disrupted.
 #
 # What's deliberately NOT here, vs. the dev compose file:
-#   - `db` (Postgres) — production Postgres is Neon (managed, external,
-#     pgvector-capable free tier). This project's own docker-compose.yml
-#     `db` service stays dev-only.
 #   - `pgadmin` — dev-only, already commented as such in docker-compose.yml.
+#
+# Postgres runs self-hosted here (service `postgres`, same pgvector/pgvector:pg16
+# image as local dev) — production Postgres was originally Neon (managed,
+# external), but Neon's free-tier network-transfer cap (5GB) was hit in under
+# 2 days of real traffic, so the database moved onto this same VM instead.
+# Not exposed on a host port; reachable only from other containers here.
 #
 # What's added, matching README.md's own documented 4-process local dev
 # model (main worker / interactive worker / stt worker / beat, each
 # `--pool=solo` — see README.md:230-269) plus the web app, its isolated
-# streaming-chat ASGI process, and a reverse proxy:
-#   web, chat, worker-default, worker-interactive, worker-stt, beat, redis, caddy
+# streaming-chat ASGI process, self-hosted Postgres, and a reverse proxy:
+#   postgres, redis, web, chat, worker-default, worker-interactive, worker-stt, beat, caddy
 #
 # Usage:
 #   docker compose -f docker/docker-compose.prod.yml up -d --build
@@ -42,6 +45,32 @@ name: ai_news_prod
 services:
 
   # ---------------------------------------------------------------------------
+  # Postgres — self-hosted (replaces Neon, which hit its free-tier network-
+  # transfer cap). Same image as local dev (pgvector/pgvector:pg16) for exact
+  # compatibility. NOT exposed on a host port — reachable only from other
+  # containers on the `backend` network via hostname `postgres`. Real password
+  # auth (unlike dev's POSTGRES_HOST_AUTH_METHOD=trust).
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    mem_limit: 400m
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ai_news}
+      POSTGRES_USER: ${POSTGRES_USER:-ai_news_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_news_user} -d ${POSTGRES_DB:-ai_news}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - backend
+
+  # ---------------------------------------------------------------------------
   # Redis — Celery broker/result-backend (DB 0) + Django cache (DB 1), exactly
   # the same DB-index split as local dev (see .wolf/cerebrum.md's DB-index-
   # collision note) — since this Redis is self-hosted here (not a managed
@@ -52,6 +81,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    mem_limit: 150m
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
@@ -73,10 +103,13 @@ services:
       context: ../web
       dockerfile: Dockerfile
     restart: unless-stopped
+    mem_limit: 350m
     env_file:
       - ../web/.env.prod
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     networks:
       - backend
@@ -105,31 +138,46 @@ services:
       context: ../web
       dockerfile: Dockerfile
     restart: unless-stopped
+    mem_limit: 250m
     command: ["python", "-m", "uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8001"]
     env_file:
       - ../web/.env.prod
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     networks:
       - backend
 
   # ---------------------------------------------------------------------------
   # Celery — main worker (default queue: scrape/stt-dispatch/embed/enrich/
-  # deep-video/cluster/score/digest/affinity/ranking). Same image as
-  # worker-interactive/worker-stt/beat below; only `command:` differs.
+  # deep-video/cluster/score/digest/affinity/ranking). SAME image as
+  # worker-interactive/worker-stt/beat below (all 4 share `image:
+  # ai_news_prod-pipeline`) — only `command:` differs. This is the ONLY one
+  # of the 4 with a `build:` block; the other 3 reference the same `image:`
+  # tag with no `build:` of their own, so `docker compose ... up --build`
+  # builds it exactly once instead of 4 separate concurrent builds of
+  # byte-identical content. (An earlier attempt gave all 4 both `image:`
+  # AND their own `build:` — Compose still built each independently despite
+  # the shared tag, and 4 concurrent unpacks of the same ~4GB image is what
+  # actually exhausted the EC2 instance's disk, twice.)
   # ---------------------------------------------------------------------------
   worker-default:
+    image: ai_news_prod-pipeline:latest
     build:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
+    mem_limit: 600m
     env_file:
       - ../.env.prod
     volumes:
       - hf_cache:/root/.cache/huggingface
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     networks:
       - backend
@@ -143,10 +191,9 @@ services:
   # single-service PaaS (see docs/DEPLOYMENT.md's architecture note).
   # ---------------------------------------------------------------------------
   worker-interactive:
-    build:
-      context: ..
-      dockerfile: Dockerfile
+    image: ai_news_prod-pipeline:latest
     restart: unless-stopped
+    mem_limit: 600m
     command: ["uv", "run", "celery", "-A", "app.celery_app:celery_app", "worker", "--pool=solo", "--loglevel=info", "-Q", "interactive", "-n", "interactive-worker@%h"]
     env_file:
       - ../.env.prod
@@ -155,6 +202,10 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+      worker-default:
+        condition: service_started
     networks:
       - backend
 
@@ -166,10 +217,9 @@ services:
   # compose file, just not silently hidden either.
   # ---------------------------------------------------------------------------
   worker-stt:
-    build:
-      context: ..
-      dockerfile: Dockerfile
+    image: ai_news_prod-pipeline:latest
     restart: unless-stopped
+    mem_limit: 900m
     command: ["uv", "run", "celery", "-A", "app.celery_app:celery_app", "worker", "--pool=solo", "--loglevel=info", "-Q", "stt", "-n", "stt-worker@%h"]
     env_file:
       - ../.env.prod
@@ -178,6 +228,10 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+      worker-default:
+        condition: service_started
     networks:
       - backend
 
@@ -187,16 +241,19 @@ services:
   # beat, no DB-backed schedule table, no external scheduling service at all.
   # ---------------------------------------------------------------------------
   beat:
-    build:
-      context: ..
-      dockerfile: Dockerfile
+    image: ai_news_prod-pipeline:latest
     restart: unless-stopped
+    mem_limit: 400m
     command: ["uv", "run", "celery", "-A", "app.celery_app:celery_app", "beat", "--loglevel=info"]
     env_file:
       - ../.env.prod
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+      worker-default:
+        condition: service_started
     networks:
       - backend
 
@@ -207,6 +264,7 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    mem_limit: 150m
     environment:
       # Read from docker/.env (docker compose auto-loads a .env file in the
       # same directory as the compose file) — see docker/.env.prod.example.
@@ -225,6 +283,8 @@ services:
       - backend
 
 volumes:
+  postgres_data:
+    driver: local
   redis_data:
     driver: local
   hf_cache:
