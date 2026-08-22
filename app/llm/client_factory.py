@@ -26,7 +26,6 @@
 
 import os
 
-from groq import Groq
 from openai import OpenAI
 
 from app.llm.groq_key_manager import GroqKeyManager, load_groq_keys
@@ -36,10 +35,20 @@ LOCAL_BASE_URL = "http://localhost:11434/v1"
 # Groq model per task, for every task EXCEPT "simple" (which has its own
 # local/Ollama branch below and otherwise falls through to the default at
 # the bottom). Unmatched tasks (including "simple" on the Groq path) use
-# llama-3.1-8b-instant, same as before this dict existed.
+# openai/gpt-oss-20b, same as before this dict existed.
+#
+# [2026-08-22] Groq retired the entire llama-3.x chat family this project
+# originally used (llama-3.3-70b-versatile / llama-3.1-8b-instant both now
+# 404 as "model_not_found") -- discovered live testing the RAG chat
+# assistant right after the M17 EC2 migration, not caused by it. Replaced
+# with the openai/gpt-oss family, Groq's current general-purpose models.
+# These are REASONING models (they emit a separate `reasoning` field before
+# `content`) -- see groq_key_manager.py's reasoning_effort="low" default,
+# without which a small max_tokens budget can be consumed entirely by
+# internal reasoning, leaving an empty visible answer.
 _GROQ_MODELS = {
-    "reasoning": "llama-3.3-70b-versatile",
-    "chat": "llama-3.3-70b-versatile",
+    "reasoning": "openai/gpt-oss-120b",
+    "chat": "openai/gpt-oss-120b",
 }
 
 
@@ -54,14 +63,13 @@ def get_llm_client_and_model(task: str):
         model = os.getenv("LOCAL_SIMPLE_MODEL", "llama3.1:8b")
         return client, model
 
-    # Default path: Groq for everything, same as today. Uses GroqKeyManager
-    # (app/llm/groq_key_manager.py) whenever GROQ_API_KEY_1/_2/... are
-    # configured, transparently trying each in order on a rate-limit/quota/
-    # auth failure — every call site here already just does
+    # Default path: Groq for everything, same as today. ALWAYS wrapped in
+    # GroqKeyManager (app/llm/groq_key_manager.py), even for a single key
+    # (either GROQ_API_KEY alone, or exactly GROQ_API_KEY_1 with no _2/_3)
+    # -- that's the one place reasoning_effort="low" gets applied by
+    # default, and every call site here already just does
     # `self._client.chat.completions.create(...)`, which GroqKeyManager
-    # also exposes, so no agent needed to change. Falls back to a single
-    # plain Groq client when only ONE key is configured (either GROQ_API_KEY
-    # alone, or exactly GROQ_API_KEY_1 with no _2/_3).
+    # also exposes, so no agent needed to change either time this was added.
     #
     # Found live during a production QA pass (2026-08-10): this single-key
     # branch used to re-read os.environ["GROQ_API_KEY"] directly instead of
@@ -75,11 +83,8 @@ def get_llm_client_and_model(task: str):
     # silently producing zero output on every GitHub Actions run since
     # GROQ_API_KEY_1 replaced the bare key. keys[0] is always the correct
     # value here regardless of which env var name it came from.
-    model = _GROQ_MODELS.get(task, "llama-3.1-8b-instant")
+    model = _GROQ_MODELS.get(task, "openai/gpt-oss-20b")
     keys = load_groq_keys()
     if not keys:
         raise ValueError("No Groq API key configured — set GROQ_API_KEY or GROQ_API_KEY_1.")
-    if len(keys) > 1:
-        return GroqKeyManager(keys), model
-    client = Groq(api_key=keys[0])
-    return client, model
+    return GroqKeyManager(keys), model

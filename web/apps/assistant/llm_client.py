@@ -32,7 +32,13 @@ from groq import (
 
 logger = logging.getLogger(__name__)
 
-MODEL = "llama-3.3-70b-versatile"  # same model as app/llm/client_factory.py's "chat"/"reasoning" tier
+# [2026-08-22] Groq retired the entire llama-3.x chat family (both this and
+# app/llm/client_factory.py's "chat"/"reasoning" tier used
+# llama-3.3-70b-versatile, now a 404 model_not_found) -- see that file's own
+# note on the same date. openai/gpt-oss-120b is Groq's current replacement,
+# same model both places use, kept in sync manually since web/ and app/ are
+# separate deploy units with no shared import path.
+MODEL = "openai/gpt-oss-120b"
 MAX_TOKENS = 700  # same as app/agents/assistant_agent.py's CHAT_MAX_TOKENS — keep in sync
 
 _CITATION_RE = re.compile(r"\[S(\d+)\]")
@@ -103,6 +109,14 @@ def stream_completion(system_prompt: str, question: str):
             client = Groq(api_key=key)
             stream = client.chat.completions.create(
                 model=MODEL, temperature=0.3, max_tokens=MAX_TOKENS, stream=True, messages=messages,
+                # gpt-oss is a REASONING model -- it spends completion tokens
+                # on an internal `reasoning` field before any visible
+                # `content`. Without capping effort, MAX_TOKENS=700 can be
+                # consumed entirely by reasoning, streaming zero visible
+                # chunks (confirmed live: default effort produced
+                # content="" with finish_reason="length" on a 10-token
+                # budget). "low" leaves the budget for an actual answer.
+                reasoning_effort="low",
             )
             break
         except _RETRYABLE_PER_KEY as exc:

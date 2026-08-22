@@ -80,6 +80,17 @@ class _CompletionsProxy:
         self._clients = clients
 
     def create(self, **kwargs):
+        # Groq's current model catalog (the old llama-3.x chat models were
+        # retired) is dominated by gpt-oss-family REASONING models, which
+        # spend completion tokens on internal "thinking" before producing
+        # any visible `message.content` — confirmed live during the M17 EC2
+        # migration: the default (unset) reasoning effort consumed an
+        # entire 10-token max_tokens budget on reasoning alone, leaving
+        # content="" and finish_reason="length". "low" leaves the budget
+        # for an actual answer instead. setdefault so a caller that already
+        # knows what it wants (or a future non-reasoning model) isn't
+        # overridden.
+        kwargs.setdefault("reasoning_effort", "low")
         last_error = None
         for idx, client in enumerate(self._clients, start=1):
             try:
