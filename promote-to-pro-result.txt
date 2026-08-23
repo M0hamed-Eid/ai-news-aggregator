@@ -1,0 +1,11 @@
+Plan update — 2026-08-23T08:56:00Z
+email: ahmed.metawea001@gmail.com
+action: promote_to_pro
+
+UPDATE 1
+=== resulting row ===
+ id |           email            | plan | plan_expires_at 
+----+----------------------------+------+-----------------
+ 35 | ahmed.metawea001@gmail.com | pro  | 
+(1 row)
+
