@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth import views as auth_views
 from django.urls import path, reverse_lazy
 
@@ -30,6 +31,13 @@ urlpatterns = [
             template_name="registration/password_reset_confirm.html",
             form_class=BootstrapSetPasswordForm,
             success_url=reverse_lazy("accounts:password_reset_complete"),
+            # "Request a new link" on the invalid/expired branch is a relative
+            # /forgot-password href -- only resolves when this page is loaded
+            # through the Vercel domain (which owns that Next.js route), not
+            # when hit directly on the IP-only Django backend. FRONTEND_BASE_URL
+            # is the same setting apps.accounts.views.frontend_redirect() uses
+            # for the identical split-domain problem.
+            extra_context={"frontend_base_url": getattr(settings, "FRONTEND_BASE_URL", "")},
         ),
         name="password_reset_confirm",
     ),

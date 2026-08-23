@@ -26,7 +26,9 @@ logout, or the initial session check) through one response parser.
 """
 import json
 import logging
+from urllib.parse import urlparse
 
+from django.conf import settings
 from django.contrib.auth import login, logout
 from django.contrib.auth import authenticate
 from django.contrib.auth.mixins import LoginRequiredMixin
@@ -457,9 +459,39 @@ class PasswordResetRequestAPIView(View):
             # never revealing whether the address has an account (a 500
             # vs. 200 IS a disclosure signal). Logged, never surfaced to
             # the client -- the response is {"ok": true} either way.
+            # domain_override/use_https: django.contrib.sites isn't installed
+            # (confirmed — no django_site table), so PasswordResetForm.save()
+            # would otherwise fall back to RequestSite(request), which reads
+            # request.get_host()/is_secure() straight off THIS request. That
+            # request reaches Django via Vercel's rewrite -> Caddy -> gunicorn
+            # hop, and Vercel's outbound rewrite call sets Host to the
+            # destination (the raw EC2 IP), not the browser's original
+            # ai-compass-sandy.vercel.app — so the emailed link was always
+            # being built as a bare http://<ip>/... URL. That's both flagged
+            # by users' network filters (raw IP, no reverse DNS) AND, more
+            # seriously, breaks the classic two-step reset flow's session
+            # cookie: SESSION_COOKIE_SECURE=True (prod.py) means a browser
+            # will only keep/resend that cookie over an HTTPS connection, and
+            # the raw IP is plain HTTP. Forcing the link onto
+            # FRONTEND_BASE_URL (the same setting apps.accounts.views.
+            # frontend_redirect() already uses for this exact split-domain
+            # problem) routes the whole reset flow through Vercel's HTTPS
+            # domain, which proxies /accounts/* straight through
+            # (next.config.ts DJANGO_PREFIXES) — same backend, but now the
+            # cookie's Secure flag is satisfied end-to-end.
+            frontend_base = getattr(settings, "FRONTEND_BASE_URL", "")
+            if frontend_base:
+                parsed = urlparse(frontend_base)
+                domain_override = parsed.netloc
+                use_https = parsed.scheme == "https"
+            else:
+                domain_override = None
+                use_https = request.is_secure()
             try:
                 form.save(
                     request=request,
+                    domain_override=domain_override,
+                    use_https=use_https,
                     subject_template_name="registration/password_reset_subject.txt",
                     email_template_name="registration/password_reset_email.html",
                 )
