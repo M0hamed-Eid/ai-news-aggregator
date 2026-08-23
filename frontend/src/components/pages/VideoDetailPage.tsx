@@ -178,7 +178,13 @@ export default function VideoDetailPage() {
 
           {/* Summary */}
           <div className="prose-compass mb-8">
-            <p>{video.summary}</p>
+            {video.summary ? (
+              <p>{video.summary}</p>
+            ) : (
+              <p className="italic text-ink-muted">
+                Summary unavailable for this video — it hasn&apos;t been processed yet.
+              </p>
+            )}
           </div>
 
           {/* Why it matters */}

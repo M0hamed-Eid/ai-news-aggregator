@@ -171,7 +171,13 @@ export default function ArticleDetailPage() {
 
           {/* Summary */}
           <div className="prose-compass mb-8">
-            <p>{article.summary}</p>
+            {article.summary ? (
+              <p>{article.summary}</p>
+            ) : (
+              <p className="italic text-ink-muted">
+                Summary unavailable for this article — it hasn&apos;t been processed yet.
+              </p>
+            )}
           </div>
 
           {/* Why it matters */}
