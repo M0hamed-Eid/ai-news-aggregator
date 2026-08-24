@@ -1,0 +1,50 @@
+flowchart TB
+    BROWSER(["User's Browser\n(HTTPS only)"])
+
+    subgraph VERCEL["Vercel (frontend host)"]
+        direction TB
+        NEXTAPP["Next.js 16 SPA\nnext.config.ts rewrites()\nproxies /api,/admin,/accounts,\n/behavior,/assistant,/healthz\nto BACKEND_ORIGIN server-side"]
+    end
+
+    subgraph EC2["AWS EC2 instance (backend host, IP-only, no domain)"]
+        direction TB
+        CADDY["Caddy\n:80 plain HTTP\n(no TLS -- Let's Encrypt cannot\ncertify a bare IP; deliberate choice)"]
+        subgraph CONTAINERS["Docker Compose (docker-compose.prod.yml)"]
+            direction LR
+            subgraph SVC_A["Request-serving"]
+                direction TB
+                WEBC["web\ngunicorn config.wsgi\n2 sync workers"]
+                CHATC["chat\nuvicorn config.asgi\n(isolated -- long SSE streams\nnever pin a web worker)"]
+            end
+            subgraph SVC_B["Celery workers"]
+                direction TB
+                WDEF["worker-default\nCelery: 6-hourly pipeline"]
+                WINT["worker-interactive\nCelery: search, RAG, source-submit"]
+                WSTT["worker-stt\nCelery: STT (CPU-heavy)"]
+                BEAT["beat\nCelery scheduler"]
+            end
+            subgraph SVC_C["Shared state"]
+                direction TB
+                PGC[("postgres\npgvector/pgvector:pg16\nself-hosted, not host-exposed")]
+                REDISC[("redis:7-alpine")]
+            end
+        end
+    end
+
+    BROWSER -->|HTTPS| NEXTAPP
+    NEXTAPP -->|"plain HTTP, server-to-server\n(mixed-content-safe: browser never sees this hop)"| CADDY
+    CADDY --> WEBC
+    CADDY --> CHATC
+    WEBC <--> PGC
+    WEBC <--> REDISC
+    CHATC <--> REDISC
+    WDEF <--> PGC
+    WINT <--> PGC
+    WSTT <--> PGC
+    BEAT --> REDISC
+    WDEF <--> REDISC
+    WINT <--> REDISC
+    WSTT <--> REDISC
+
+    GHA["GitHub Actions\n(pipeline.yml -- scheduled batch\njobs fallback; promote-to-pro.yml\nSSHes to EC2_HOST, no direct DB access)"]
+    GHA -.SSH.-> EC2

@@ -1,0 +1,127 @@
+% Arabic front-matter mirror, placed at the end of the document -- this
+% matches the PHYSICAL LAYOUT of the official Digilians template file
+% itself (its own Arabic title/approval/abstract pages appear after the
+% English body + appendix placeholder, not before it). If your committee
+% prefers the Arabic pages bound at the very front instead, move this
+% \input line in main.tex to just after \begin{document} and swap the
+% \pagenumbering calls accordingly -- flagged in the final QA notes.
+
+\clearpage
+\begin{Arabic}
+% NOTE: deliberately NOT using the \titlepage environment here -- its
+% standard LaTeX-kernel definition includes \setcounter{page}{1} on both
+% entry and exit, which is correct for a document's opening title page but
+% would silently reset the running page counter this deep in the back
+% matter. \thispagestyle{empty} alone gives the same unnumbered look
+% without touching the counter.
+\clearpage\thispagestyle{empty}
+\begin{center}
+
+% LTR override: without \beginL/\endL, bidi's RTL paragraph direction here
+% mirrors the visual order of these three side-by-side logos (last-in-source
+% would render leftmost). \beginL...\endL forces the same left-to-right
+% order as the English title page (military, Digilians, MCIT).
+\beginL
+\begin{minipage}{0.30\textwidth}\centering\includegraphics[height=1.6cm]{figures/logos/logo_military_academy.png}\end{minipage}%
+\begin{minipage}{0.38\textwidth}\centering\includegraphics[height=1.6cm]{figures/logos/logo_digilians.png}\end{minipage}%
+\begin{minipage}{0.30\textwidth}\centering\includegraphics[height=1.6cm]{figures/logos/logo_mcit.png}\end{minipage}
+\endL
+
+\vspace{0.4cm}
+\textbf{الجهة المانحة}\par
+\vspace{0.4cm}
+\includegraphics[width=0.22\textwidth]{figures/logos/logo_nti.png}
+
+\vspace{1.1cm}
+{\Large\bfseries اسم المشروع: AI Compass}\par
+\vspace{0.5cm}
+{\large رسالة مقدمة من}\par
+\vspace{0.3cm}
+{\large\bfseries
+محمد عيد \\
+أحمد حسام \\
+عبدالرحمن سعيد \\
+محمد سلامة \\
+عبدالرحمن حسين
+}
+
+\vspace{0.8cm}
+{\normalsize رسالة مقدمة استكمالًا لمتطلبات الحصول على دبلومة Digilians لمدة تسعة أشهر في الذكاء الاصطناعي وعلوم البيانات}
+
+\vspace{1cm}
+{\large\bfseries تحت إشراف}\par
+\vspace{0.3cm}
+{\large\bfseries د. غزال عبد العاطي فهمي}\\
+{\large\itshape المعهد القومي للاتصالات \LR{(NTI)}}
+
+\vspace{0.8cm}
+\begin{tabular}{@{}c@{}}
+\bfseries المشرف العام \\
+د/ محمود خليل
+\end{tabular}
+\hfill
+\begin{tabular}{@{}c@{}}
+\bfseries المدير الأكاديمي \\
+د/ أحمد طوبال
+\end{tabular}
+
+\vspace{1.1cm}
+{\large (أغسطس 2026)}
+
+\end{center}
+\clearpage
+
+\thispagestyle{empty}
+\begin{center}
+
+\beginL
+\begin{minipage}{0.30\textwidth}\centering\includegraphics[height=1.6cm]{figures/logos/logo_military_academy.png}\end{minipage}%
+\begin{minipage}{0.38\textwidth}\centering\includegraphics[height=1.6cm]{figures/logos/logo_digilians.png}\end{minipage}%
+\begin{minipage}{0.30\textwidth}\centering\includegraphics[height=1.6cm]{figures/logos/logo_mcit.png}\end{minipage}
+\endL
+
+\vspace{0.4cm}
+\textbf{الجهة المانحة}\par
+\vspace{0.4cm}
+\includegraphics[width=0.22\textwidth]{figures/logos/logo_nti.png}
+
+\vspace{0.8cm}
+{\Large\bfseries صفحة الموافقة}\par
+\vspace{0.6cm}
+{\large عنوان الرسالة: \textbf{AI Compass}}\par
+\vspace{0.4cm}
+{\large رسالة مقدمة من}\par
+{\large\bfseries محمد عيد، أحمد حسام، عبدالرحمن سعيد، محمد سلامة، عبدالرحمن حسين}\par
+\vspace{0.4cm}
+{\normalsize رسالة مقدمة استكمالًا لمتطلبات الحصول على دبلومة Digilians لمدة تسعة أشهر، مسار الذكاء الاصطناعي وعلوم البيانات}
+
+\vspace{0.9cm}
+{\large\bfseries يعتمد من لجنة الممتحنين}
+
+\vspace{0.6cm}
+\begin{tabular}{|p{7cm}|p{6cm}|}
+\hline
+\textbf{الاسم} & \textbf{التوقيع} \\
+\hline
+د. غزال عبد العاطي فهمي & \\[1.1cm]
+\hline
+د/ محمود خليل & \\[1.1cm]
+\hline
+د/ أحمد طوبال & \\[1.1cm]
+\hline
+\end{tabular}
+
+\end{center}
+\clearpage
+
+\chapter*{ملخص المشروع}
+
+شهد المحتوى المرتبط بالذكاء الاصطناعي نموًا متسارعًا، بدءًا من الأبحاث العلمية وإصدارات البرمجيات مفتوحة المصدر، وصولًا إلى إعلانات الشركات، والسياسات الحكومية، وأخبار التمويل، والفيديوهات الطويلة. وقد أدى هذا النمو إلى زيادة صعوبة متابعة هذا المحتوى وتمييز ما يتوافق فعليًا مع اهتمامات كل مستخدم عن الكم الهائل من المعلومات المتاحة. يعالج مشروع AI Compass هذه المشكلة من خلال منصة ذكية لفهم المحتوى وتخصيصه، تعتمد على فصل واضح بين عمليات المعالجة المشتركة التي تُنفذ مرة واحدة لكل محتوى، وعمليات التخصيص التي تُنفذ لكل مستخدم عند الحاجة.
+
+يعتمد النظام على خط معالجة بيانات \LR{(Data Processing Pipeline)} يعمل في الخلفية لجمع المحتوى باستمرار من ستة عشر مصدرًا مسجلًا، تغطي الأبحاث العلمية، والمصادر مفتوحة المصدر، والفيديوهات، والمجتمعات التقنية، والمنشورات الحكومية، وأخبار التمويل، بالإضافة إلى المصادر التي يقترحها المستخدمون بعد إخضاعها لعملية آلية للتحقق من مدى ملاءمتها باستخدام تشابه المتجهات الدلالية \LR{(Embedding Similarity)}. تتم معالجة كل مادة باستخدام استدعاء واحد منظم لنموذج لغوي كبير \LR{(LLM)} لاستخراج الملخص، والموضوعات من قاموس مصطلحات محدد، والكيانات المسماة، وتصنيف المحتوى، ودرجة العمق التقني. كما يتم تحويل المحتوى محليًا إلى متجهات ذات 384 بُعدًا، مما يتيح اكتشاف المحتوى المتشابه، والبحث الدلالي عبر المقالات والفيديوهات، بالإضافة إلى الاسترجاع على مستوى المقاطع النصية.
+
+بعد ذلك، تستخدم المنصة خدمة ترتيب حتمية \LR{(Deterministic Ranking)} غير توليدية لترتيب المحتوى لكل مستخدم اعتمادًا على خمس إشارات موزونة: التوافق مع الاهتمامات، والجودة، والحداثة، والتوافق مع المصدر، وعامل التنويع. ويتم تحسين تنوع النتائج باستخدام خوارزمية \LR{Maximal Marginal Relevance} إلى جانب تخصيص جزء للاستكشاف، مع توفير تفسير مبسط لكل توصية. كما يتم تجميع الإشارات السلوكية، مثل النقرات والحفظ والمتابعة، في تفضيلات متناقصة بمرور الوقت على مستوى الموضوع والمصدر والكيان، بالإضافة إلى متجه تفضيلات شخصي يُستخدم لتحسين عملية الترتيب باستمرار.
+
+ويضم النظام أيضًا مساعدًا محادثيًا قائمًا على الاسترجاع المعزز بالتوليد \LR{(RAG)}، يجيب عن أسئلة المستخدمين اعتمادًا على المقاطع المسترجعة من المحتوى المفهرس، مع التحقق من صحة الاستشهادات على مستوى الخادم قبل عرضها. كما تتم معالجة الفيديوهات الطويلة محليًا باستخدام تحويل الكلام إلى نص وتقسيمها إلى فصول لدعم إنتاج ملخصات معمقة. وقد تم نشر النظام في بيئة تشغيل فعلية باستخدام معمارية موزعة بين استضافة الواجهة الأمامية على منصة سحابية مُدارة، واستضافة الخلفية وقاعدة البيانات ذاتيًا على خادم افتراضي واحد. وأظهر تشغيل أداة تقييم غير متصلة (تطبق مقياسي \LR{NDCG@k} و\LR{MAP} بعد تصحيح منهجي) أن الأداة نفسها تعمل بشكل صحيح، لكنها أظهرت أيضًا، من خلال تحليل جذري للأسباب، أن حجم التفاعل الحالي للمنصة لا يزال غير كافٍ لإنتاج نتيجة ذات دلالة إحصائية، وهي محدودية تم توضيحها بصراحة. وأظهر التحقق العملي أن مسار الترتيب ينتج تغذية مخصصة ومفسَّرة دون استخدام أي استدعاءات لنموذج لغوي كبير أثناء مرحلة العرض، بينما يحقق نظام التفريغ الصوتي المحلي معدل معالجة يقارب 1.76 مرة من السرعة الفعلية باستخدام وحدة المعالجة المركزية فقط. وتوضح هذه النتائج إمكانية بناء نظام توصية ومحادثة مخصص لمجال تقني سريع التطور، مع حصر استخدام النماذج التوليدية في أدوار محددة وقابلة للتحقق، بدلًا من الاعتماد عليها كأساس لعمليات الترتيب والاسترجاع.
+
+\end{Arabic}

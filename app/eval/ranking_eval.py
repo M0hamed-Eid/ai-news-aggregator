@@ -66,15 +66,31 @@ def average_precision(ranked_keys: List[Tuple[str, int]], relevant_keys: set) ->
     return (sum(precisions) / len(relevant_keys)) if precisions else 0.0
 
 
-def build_relevance_labels(db, user_id: int, held_out_days: int = 7) -> Dict[Tuple[str, int], float]:
+def build_relevance_labels(
+    db, user_id: int, held_out_days: int = 7, held_out_since: Optional[datetime] = None
+) -> Dict[Tuple[str, int], float]:
     """
-    Held-out ground truth: this user's click/save/digest_click events from
-    the last `held_out_days`, weighted. Read via the same DjangoUserEvent
-    cross-ORM mirror affinity_tasks.py already uses — no new table.
+    Held-out ground truth: this user's click/save/digest_click events,
+    weighted. Read via the same DjangoUserEvent cross-ORM mirror
+    affinity_tasks.py already uses — no new table.
+
+    Cutoff selection (evaluation-methodology note, added during the 2026-08-22
+    graduation-thesis evaluation pass — see docs/EVALUATION.md):
+    the ORIGINAL implementation always derived the cutoff as
+    `datetime.now(timezone.utc) - held_out_days`, i.e. relative to whenever
+    the evaluation SCRIPT happens to run. That is only a valid "held-out
+    future events" cutoff if the stored `UserRanking` rows being scored were
+    ALSO computed close to "now" — which is not guaranteed, since
+    `user_rankings` is wholesale-replaced on every ranking run (no history
+    is kept). Passing an explicit `held_out_since` (e.g. the ranking's own
+    `computed_at`) fixes the cutoff to the actual moment the ranking was
+    produced, which is what "held-out" is supposed to mean. `held_out_days`
+    is kept as the default, backward-compatible behavior when
+    `held_out_since` is not supplied — no existing caller's behavior changes.
     """
     from app.database.models.django_readmodels import DjangoUserEvent
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=held_out_days)
+    cutoff = held_out_since if held_out_since is not None else (datetime.now(timezone.utc) - timedelta(days=held_out_days))
     events = (
         db.query(DjangoUserEvent)
         .filter(DjangoUserEvent.user_id == user_id, DjangoUserEvent.created_at >= cutoff)
@@ -88,8 +104,15 @@ def build_relevance_labels(db, user_id: int, held_out_days: int = 7) -> Dict[Tup
     return dict(relevance)
 
 
-def evaluate_user_ranking(db, user_id: int, held_out_days: int = 7, k: int = 10) -> Optional[dict]:
-    """NDCG@k + MAP for one user's CURRENTLY STORED ranking against their held-out events."""
+def evaluate_user_ranking(
+    db, user_id: int, held_out_days: int = 7, k: int = 10, held_out_since: Optional[datetime] = None
+) -> Optional[dict]:
+    """NDCG@k + MAP for one user's CURRENTLY STORED ranking against their held-out events.
+
+    `held_out_since`: see `build_relevance_labels` docstring. When omitted,
+    behavior is unchanged from the original implementation (wall-clock
+    `now - held_out_days`).
+    """
     rows = (
         db.query(UserRanking)
         .filter(UserRanking.user_id == user_id)
@@ -100,7 +123,7 @@ def evaluate_user_ranking(db, user_id: int, held_out_days: int = 7, k: int = 10)
         return None
 
     ranked_keys = [(r.content_type, r.content_id) for r in rows]
-    relevance = build_relevance_labels(db, user_id, held_out_days)
+    relevance = build_relevance_labels(db, user_id, held_out_days, held_out_since=held_out_since)
     relevant_keys = {key for key, weight in relevance.items() if weight > 0}
 
     return {
@@ -113,12 +136,30 @@ def evaluate_user_ranking(db, user_id: int, held_out_days: int = 7, k: int = 10)
     }
 
 
-def evaluate_all_users(db, held_out_days: int = 7, k: int = 10) -> List[dict]:
-    """Runs evaluate_user_ranking() for every user with a stored ranking. Skips users with none."""
+def evaluate_all_users(
+    db, held_out_days: int = 7, k: int = 10, anchor_to_computed_at: bool = False
+) -> List[dict]:
+    """Runs evaluate_user_ranking() for every user with a stored ranking. Skips users with none.
+
+    `anchor_to_computed_at`: if True, each user's held-out cutoff is that
+    user's own `UserRanking.computed_at` (the true "did anything happen
+    AFTER this ranking was produced" cutoff) instead of wall-clock `now`.
+    Default False preserves the original behavior exactly.
+    """
     user_ids = [uid for (uid,) in db.query(UserRanking.user_id).distinct()]
     results = []
     for uid in user_ids:
-        result = evaluate_user_ranking(db, uid, held_out_days=held_out_days, k=k)
+        held_out_since = None
+        if anchor_to_computed_at:
+            computed_at = (
+                db.query(UserRanking.computed_at)
+                .filter(UserRanking.user_id == uid)
+                .order_by(UserRanking.computed_at.desc())
+                .limit(1)
+                .scalar()
+            )
+            held_out_since = computed_at
+        result = evaluate_user_ranking(db, uid, held_out_days=held_out_days, k=k, held_out_since=held_out_since)
         if result is not None:
             results.append(result)
     return results

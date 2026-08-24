@@ -1,0 +1,60 @@
+flowchart TB
+    subgraph EXT["External Sources"]
+        direction LR
+        RSS["RSS/Atom & JSON APIs\narXiv, GitHub, Reddit,\ngov, funding, HF, blogs"]
+        YT["YouTube\n(captions API + STT fallback)"]
+        USR["User-submitted feeds\n(relevance-gated)"]
+    end
+
+    subgraph PIPE["app/ — SQLAlchemy pipeline (Python 3.14, own venv)"]
+        direction LR
+        SCRAPE["Scrapers\n(BaseScraper adapters)"]
+        ENRICH["EnrichmentAgent\n1 Groq call/item"]
+        EMBED["Embedding service\nall-MiniLM-L6-v2, local, 384-dim"]
+        CLUSTER["Clustering\nUnion-Find, cosine >= 0.92"]
+        RANK["RankingService\ndeterministic, no LLM"]
+        RAGIDX["RAG chunker + indexer"]
+        STT["STT worker\nfaster-whisper, CPU"]
+    end
+
+    subgraph SHARED["Shared Infrastructure (self-hosted AWS EC2)"]
+        direction LR
+        PG[("Postgres 16 + pgvector\nsingle source of truth\n(self-hosted since Aug 2026,\nmigrated off Neon)")]
+        REDIS[("Redis\nCelery broker + Django cache")]
+    end
+
+    subgraph WEB["web/ — Django 5.2 (Python 3.13, own venv, IP-only, plain HTTP)"]
+        direction LR
+        API["JSON API\ngunicorn WSGI, 2 workers"]
+        AUTH["Auth / Entitlements / Stripe"]
+        CHAT["Chat streaming service\nuvicorn ASGI, isolated container"]
+    end
+
+    subgraph FRONT["frontend/ — Next.js 16 SPA on Vercel"]
+        NEXT["React 19 SPA\nowns all UI\nserver-side proxy to backend"]
+    end
+
+    USER(["User (browser)"])
+
+    RSS --> SCRAPE
+    YT --> SCRAPE
+    USR --> SCRAPE
+    SCRAPE --> ENRICH --> EMBED --> CLUSTER --> RANK
+    EMBED --> RAGIDX
+    YT -.-> STT -.-> ENRICH
+
+    SCRAPE --> PG
+    ENRICH --> PG
+    EMBED --> PG
+    RAGIDX --> PG
+    RANK --> PG
+    PG <--> REDIS
+
+    PG --> API
+    REDIS -.Celery tasks.-> API
+    API --> AUTH
+    REDIS -.streaming retrieval.-> CHAT
+
+    API -->|"server-side rewrite\n(BACKEND_ORIGIN)"| NEXT
+    CHAT -->|SSE tokens| NEXT
+    NEXT --> USER

@@ -1,0 +1,143 @@
+\chapter{Problem Definition and Requirements}
+\label{chap:requirements}
+
+\section{Problem Statement}
+\label{sec:req-problem}
+
+The volume of AI-related material published daily (research preprints,
+model and framework releases, government and policy notices, funding
+announcements, long-form video, and discussion on aggregator platforms) has
+grown past what any individual reader can triage manually across the many
+independent sites, feeds, and channels that publish it. Addressing this
+information-overload problem requires more than mechanically republishing
+content: the system must continuously acquire material from a heterogeneous
+and growing set of source types, reduce each item once to structured
+information later processes can reason about without re-reading raw text,
+remove redundancy created by multiple outlets covering the same event, rank
+and filter what remains against an individual user's demonstrated interests,
+and expose both a browsable feed and a natural-language interface for
+questions a static ranked list cannot answer. Each of these needs is
+restated below as a concrete requirement, realized by a component described
+in the chapters that follow.
+
+\section{Functional Requirements}
+\label{sec:req-functional}
+
+\begin{description}
+  \item[FR1: Multi-source ingestion via a pluggable adapter pattern.]
+  New source types must be addable without modifying the agents and
+  services that consume their output, since the set of sources this system
+  covers is expected to keep growing.
+
+  \item[FR2: Automated relevance screening for user-submitted sources.]
+  Since end users, not only maintainers, may register new sources, the
+  system must accept or reject a candidate source's topical fit without a
+  human reviewer, so the source catalog can scale with the user base.
+
+  \item[FR3: Single-pass content enrichment.]
+  Every item must be reduced once to a structured record (summary, topics,
+  entities, category) so ranking, search, clustering, and the assistant can
+  query stored facts instead of re-deriving them from raw text on every
+  read.
+
+  \item[FR4: Near-duplicate clustering.]
+  Because independent outlets frequently cover the same story, the system
+  must detect and group near-duplicate items so a user is not shown the
+  same event repeatedly under different bylines.
+
+  \item[FR5: Personalized, explainable, deterministic ranking.]
+  The system must order each user's feed by that user's demonstrated
+  interests and attach a human-readable reason to every ranked item, so the
+  ordering is auditable rather than an opaque score.
+
+  \item[FR6: Semantic search.]
+  Users must be able to locate content by meaning rather than exact
+  keyword match, requiring retrieval over a vector representation of each
+  item.
+
+  \item[FR7: A grounded conversational assistant.]
+  Users must be able to ask free-form questions about the corpus or a
+  specific item and receive an answer traceable to specific source
+  passages, since an ungrounded answer about news content cannot be
+  trusted without a way to verify it.
+
+  \item[FR8: Deep-media transcription and chaptering.]
+  Long-form video lacking a usable caption track must still enter the same
+  enrichment and ranking pipeline as text, requiring a transcription
+  fallback and, for sufficiently long videos, chapter-level summarization
+  rather than one pass over the whole transcript.
+
+  \item[FR9: Free/Pro entitlements and billing.]
+  The system must gate a subset of features behind a paid plan and process
+  real payments for it, since a system meant to operate as a product needs
+  a mechanism to sustain its own running costs.
+\end{description}
+
+\section{Non-Functional Requirements}
+\label{sec:req-nonfunctional}
+
+\begin{description}
+  \item[Determinism in the ranking serving path.]
+  The function that orders a feed at request time must not invoke a large
+  language model, since an LLM call is comparatively slow, costly, and
+  non-reproducible for an operation performed on every request.
+
+  \item[Per-ORM database ownership boundaries.]
+  With two ORMs reading and writing one database, each table must be owned
+  by exactly one ORM, which alone creates and migrates it; the other ORM
+  may only read it through a dedicated mirror model, never write or
+  migrate across the boundary.
+
+  \item[Idempotent ingestion.]
+  Re-running an ingestion phase, after a crash, retry, or scheduling
+  overlap, must not create duplicate rows, since the pipeline runs
+  unattended and cannot rely on manual cleanup.
+
+  \item[Graceful degradation when an optional integration is unconfigured.]
+  Billing, transactional email, and LLM access depend on third-party
+  services that may be absent in a given deployment; the system must keep
+  functioning with those features inactive rather than failing outright.
+
+  \item[Citation-verifiable RAG answers.]
+  Every claim the assistant attributes to a source must be checkable
+  against that source at generation time; an answer whose citations cannot
+  be resolved must be flagged as such, not presented as equally
+  trustworthy.
+
+  \item[Reproducible evaluation.]
+  Claims about ranking quality must come from a versioned, re-runnable
+  evaluation procedure over stored data, not one-off manual inspection, so
+  a later run on the same data yields the same verdict.
+\end{description}
+
+\section{Architecture Principles}
+\label{sec:req-principles}
+
+The requirements above are enforced, in this project, by a small set of
+architecture principles adopted early and treated as invariants throughout
+development. Four recur across the chapters that follow and are stated here
+as formal design constraints:
+
+\begin{enumerate}
+  \item \textbf{Ingest once, personalize later.} Content is scraped,
+  enriched, embedded, scored, and clustered exactly once, globally; per-user
+  work happens only at read/serve time over that shared pool. Scraping or
+  enriching content separately per user is disallowed.
+  \item \textbf{One enrichment call per item.} All structured metadata for
+  an item (summary, topics, entities, category) comes from a single
+  language-model call at ingest time; a new metadata field extends that
+  call's output schema, never adds a second pass over the corpus.
+  \item \textbf{Recommendation trends away from the language model in the
+  hot path.} A language model's role in ranking is limited to producing a
+  human-readable explanation for a score already computed deterministically;
+  the score itself is never computed by a language model at serving time.
+  \item \textbf{Strict per-ORM table ownership.} Every table has exactly one
+  owning ORM; cross-ORM communication is read-only in both directions, and a
+  feature that appears to need a cross-ORM write is instead resolved by
+  adding a table on the writer's own side and mirroring it, never by a
+  one-off write exception.
+\end{enumerate}
+
+Chapter~\ref{chap:architecture} shows how these principles are realized in
+the system's codebase structure, and later chapters revisit each principle
+where it governs a specific subsystem's design.

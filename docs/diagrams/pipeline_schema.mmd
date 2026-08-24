@@ -10,8 +10,15 @@ erDiagram
     ARTICLES }o--o{ CONTENT_CLUSTERS : "via cluster_members"
     ARTICLES ||--o| CONTENT_SCORES : "scored"
     ENTITIES ||--o| PERSON_ENTITIES : "if type=person"
-    YOUTUBE_VIDEOS ||--o{ CONTENT_CHUNKS : "chunked for RAG (M14)"
+    YOUTUBE_VIDEOS ||--o{ CONTENT_CHUNKS : "chaptered (deep media, M12)"
     YOUTUBE_VIDEOS ||--o{ STT_JOBS : "transcription tracked by"
+    ARTICLES ||--o{ RAG_CHUNKS : "passage-indexed (M14)"
+    YOUTUBE_VIDEOS ||--o{ RAG_CHUNKS : "passage-indexed (M14)"
+    ARTICLES ||--o{ USER_RANKINGS : "ranked per user"
+    YOUTUBE_VIDEOS ||--o{ USER_RANKINGS : "ranked per user"
+    USER_RANKINGS }o--|| USERS_EXT : "belongs to (Django users.id, no FK)"
+    USER_AFFINITIES }o--|| USERS_EXT : "belongs to (Django users.id, no FK)"
+    USER_PROFILE_VECTORS }o--|| USERS_EXT : "belongs to (Django users.id, no FK)"
 
     SOURCES {
         bigint id PK
@@ -27,6 +34,7 @@ erDiagram
         string source FK "-> sources.key"
         text content
         text summary
+        datetime published_at
     }
     YOUTUBE_VIDEOS {
         bigint id PK
@@ -34,12 +42,34 @@ erDiagram
         string channel_id
         text content "transcript"
         int duration_seconds
+        jsonb transcript_segments "start/duration/text"
     }
     EMBEDDINGS {
         bigint id PK
         string content_type
         bigint content_id
-        vector embedding "384-dim, pgvector"
+        vector embedding "384-dim, pgvector, no ANN index"
+    }
+    RAG_CHUNKS {
+        bigint id PK
+        string content_type
+        bigint content_id
+        text chunk_text
+        int char_start
+        int char_end
+        vector embedding "384-dim, HNSW cosine index"
+    }
+    CONTENT_CHUNKS {
+        bigint id PK
+        bigint youtube_video_id FK
+        int chunk_index
+        text chapter_title
+        text summary
+    }
+    STT_JOBS {
+        bigint id PK
+        string status "queued/running/completed/failed/skipped_too_long"
+        string transcript_source "manual_caption/auto_caption/stt"
     }
     CONTENT_ENRICHMENT {
         bigint id PK
@@ -63,6 +93,31 @@ erDiagram
         float score
         string score_version
     }
+    USER_RANKINGS {
+        bigint id PK
+        bigint user_id "Django users.id, no FK"
+        string content_type
+        bigint content_id
+        int rank
+        float relevance_score
+        text reasoning "templated, no LLM"
+        string score_version
+        jsonb features
+        datetime computed_at "wholesale-replaced each run"
+    }
+    USER_AFFINITIES {
+        bigint id PK
+        bigint user_id "Django users.id, no FK"
+        string dimension "topic/source/entity"
+        string key
+        float weight "14-day half-life decay"
+    }
+    USER_PROFILE_VECTORS {
+        bigint id PK
+        bigint user_id "Django users.id, no FK"
+        vector taste_vector "384-dim, L2-normalized"
+        int sample_size
+    }
     TRENDS {
         bigint id PK
         string dimension "topic or entity"
@@ -70,4 +125,7 @@ erDiagram
         date date
         float z_score
         bool is_trending
+    }
+    USERS_EXT {
+        bigint id PK "Django-owned; shown here only as a reference anchor"
     }

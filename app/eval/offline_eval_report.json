@@ -1,0 +1,243 @@
+{
+  "run_at_utc": "2026-08-22T17:32:34.886687+00:00",
+  "k": 10,
+  "random_seed": 42,
+  "score_version_evaluated": "v1-deterministic",
+  "naive_pass": [
+    {
+      "user_id": 1,
+      "score_version": "v1-deterministic",
+      "n_ranked": 50,
+      "n_relevant_held_out": 0,
+      "ndcg_at_k": 0.0,
+      "map": 0.0
+    },
+    {
+      "user_id": 3,
+      "score_version": "v1-deterministic",
+      "n_ranked": 10,
+      "n_relevant_held_out": 0,
+      "ndcg_at_k": 0.0,
+      "map": 0.0
+    },
+    {
+      "user_id": 4,
+      "score_version": "v1-deterministic",
+      "n_ranked": 10,
+      "n_relevant_held_out": 0,
+      "ndcg_at_k": 0.0,
+      "map": 0.0
+    },
+    {
+      "user_id": 5,
+      "score_version": "v1-deterministic",
+      "n_ranked": 1,
+      "n_relevant_held_out": 0,
+      "ndcg_at_k": 0.0,
+      "map": 0.0
+    },
+    {
+      "user_id": 6,
+      "score_version": "v1-deterministic",
+      "n_ranked": 10,
+      "n_relevant_held_out": 0,
+      "ndcg_at_k": 0.0,
+      "map": 0.0
+    },
+    {
+      "user_id": 7,
+      "score_version": "v1-deterministic",
+      "n_ranked": 10,
+      "n_relevant_held_out": 0,
+      "ndcg_at_k": 0.0,
+      "map": 0.0
+    },
+    {
+      "user_id": 8,
+      "score_version": "v1-deterministic",
+      "n_ranked": 10,
+      "n_relevant_held_out": 0,
+      "ndcg_at_k": 0.0,
+      "map": 0.0
+    },
+    {
+      "user_id": 9,
+      "score_version": "v1-deterministic",
+      "n_ranked": 10,
+      "n_relevant_held_out": 0,
+      "ndcg_at_k": 0.0,
+      "map": 0.0
+    },
+    {
+      "user_id": 28,
+      "score_version": "v1-deterministic",
+      "n_ranked": 10,
+      "n_relevant_held_out": 0,
+      "ndcg_at_k": 0.0,
+      "map": 0.0
+    },
+    {
+      "user_id": 29,
+      "score_version": "v1-deterministic",
+      "n_ranked": 10,
+      "n_relevant_held_out": 0,
+      "ndcg_at_k": 0.0,
+      "map": 0.0
+    }
+  ],
+  "retrospective_pass": [
+    {
+      "user_id": 1,
+      "score_version": "v1-deterministic",
+      "computed_at": "2026-08-22T15:30:24.538334+00:00",
+      "n_ranked": 50,
+      "n_relevant_known_ever": 43,
+      "n_relevant_within_ranked_set": 0,
+      "personalized": {
+        "ndcg_at_k": 0.0,
+        "map": 0.0
+      },
+      "baseline_chronological": {
+        "ndcg_at_k": 0.0,
+        "map": 0.0
+      },
+      "baseline_random": {
+        "ndcg_at_k": 0.0,
+        "map": 0.0
+      }
+    },
+    {
+      "user_id": 3,
+      "score_version": "v1-deterministic",
+      "computed_at": "2026-07-15T04:24:31.506407+00:00",
+      "n_ranked": 10,
+      "n_relevant_known_ever": 0,
+      "n_relevant_within_ranked_set": 0,
+      "personalized": null,
+      "baseline_chronological": null,
+      "baseline_random": null
+    },
+    {
+      "user_id": 4,
+      "score_version": "v1-deterministic",
+      "computed_at": "2026-08-22T15:30:45.628819+00:00",
+      "n_ranked": 10,
+      "n_relevant_known_ever": 3,
+      "n_relevant_within_ranked_set": 0,
+      "personalized": {
+        "ndcg_at_k": 0.0,
+        "map": 0.0
+      },
+      "baseline_chronological": {
+        "ndcg_at_k": 0.0,
+        "map": 0.0
+      },
+      "baseline_random": {
+        "ndcg_at_k": 0.0,
+        "map": 0.0
+      }
+    },
+    {
+      "user_id": 5,
+      "score_version": "v1-deterministic",
+      "computed_at": "2026-07-17T18:21:57.756462+00:00",
+      "n_ranked": 1,
+      "n_relevant_known_ever": 0,
+      "n_relevant_within_ranked_set": 0,
+      "personalized": null,
+      "baseline_chronological": null,
+      "baseline_random": null
+    },
+    {
+      "user_id": 6,
+      "score_version": "v1-deterministic",
+      "computed_at": "2026-07-15T04:24:35.105250+00:00",
+      "n_ranked": 10,
+      "n_relevant_known_ever": 0,
+      "n_relevant_within_ranked_set": 0,
+      "personalized": null,
+      "baseline_chronological": null,
+      "baseline_random": null
+    },
+    {
+      "user_id": 7,
+      "score_version": "v1-deterministic",
+      "computed_at": "2026-07-15T04:24:36.073329+00:00",
+      "n_ranked": 10,
+      "n_relevant_known_ever": 0,
+      "n_relevant_within_ranked_set": 0,
+      "personalized": null,
+      "baseline_chronological": null,
+      "baseline_random": null
+    },
+    {
+      "user_id": 8,
+      "score_version": "v1-deterministic",
+      "computed_at": "2026-07-15T04:24:37.174987+00:00",
+      "n_ranked": 10,
+      "n_relevant_known_ever": 0,
+      "n_relevant_within_ranked_set": 0,
+      "personalized": null,
+      "baseline_chronological": null,
+      "baseline_random": null
+    },
+    {
+      "user_id": 9,
+      "score_version": "v1-deterministic",
+      "computed_at": "2026-08-22T15:30:44.633035+00:00",
+      "n_ranked": 10,
+      "n_relevant_known_ever": 0,
+      "n_relevant_within_ranked_set": 0,
+      "personalized": null,
+      "baseline_chronological": null,
+      "baseline_random": null
+    },
+    {
+      "user_id": 28,
+      "score_version": "v1-deterministic",
+      "computed_at": "2026-08-03T06:26:21.145452+00:00",
+      "n_ranked": 10,
+      "n_relevant_known_ever": 0,
+      "n_relevant_within_ranked_set": 0,
+      "personalized": null,
+      "baseline_chronological": null,
+      "baseline_random": null
+    },
+    {
+      "user_id": 29,
+      "score_version": "v1-deterministic",
+      "computed_at": "2026-08-22T15:30:23.486747+00:00",
+      "n_ranked": 10,
+      "n_relevant_known_ever": 2,
+      "n_relevant_within_ranked_set": 0,
+      "personalized": {
+        "ndcg_at_k": 0.0,
+        "map": 0.0
+      },
+      "baseline_chronological": {
+        "ndcg_at_k": 0.0,
+        "map": 0.0
+      },
+      "baseline_random": {
+        "ndcg_at_k": 0.0,
+        "map": 0.0
+      }
+    }
+  ],
+  "dataset": {
+    "user_rankings_rows": 131,
+    "distinct_ranked_users": 10,
+    "ranked_user_ids": [
+      1,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      28,
+      29
+    ]
+  }
+}

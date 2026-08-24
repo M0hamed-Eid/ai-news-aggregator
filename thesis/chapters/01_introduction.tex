@@ -1,0 +1,45 @@
+\chapter{Introduction}
+\label{ch:introduction}
+
+\section{The AI Information-Overload Problem}
+
+The volume of publicly available material documenting progress in artificial intelligence has outgrown the capacity of any single reader to track it manually. A practitioner who wants to stay current must, in principle, monitor peer-reviewed research papers, open-source model and code releases, industry product announcements, government and regulatory policy documents, funding and investment news, and long-form video content such as conference talks and technical interviews. These sources differ in publication cadence, structure, and reading effort: a paper abstract and a ninety-minute video require entirely different consumption strategies, yet both may report the same underlying development. The rate at which this material is produced continues to grow, while the number of hours available to read it does not. The result is a widening gap between the volume of AI-related information published and the volume any individual can plausibly absorb, filter, and act upon.
+
+\section{Why Conventional Aggregation Falls Short}
+
+Generic news aggregators and RSS readers address part of this problem (they reduce the effort of visiting many sites), but they do not address the harder problem of relevance. A conventional feed reader presents every item from every subscribed source in reverse-chronological order, with no notion of which items matter to a particular reader's interests, no semantic understanding of what an item is actually about beyond its title, and no mechanism for asking a question against the accumulated corpus rather than reading it item by item. Two readers with entirely different interests receive an identical stream. Finding an answer to a specific question (for example, "which recent open-source releases support long-context inference on consumer GPUs?") requires manually scanning dozens of items, because keyword search over titles is a poor proxy for semantic relevance and there is no way to converse with the material directly. Closing this gap requires two capabilities conventional aggregation does not provide: a personalization layer that ranks and filters content per user, and a retrieval layer that supports natural-language querying over the corpus.
+
+\section{The Personalization and Retrieval Problem}
+
+Building both capabilities correctly raises problems that are well documented in the personalization and information-retrieval literature but easy to get wrong in practice. A recommender for a new platform faces a \emph{cold-start} problem: with few users and little accumulated interaction history, approaches that rely on cross-user co-engagement patterns have no signal to work from. A recommender that optimizes purely for measured relevance risks a \emph{filter bubble}, repeatedly surfacing near-duplicates of what a user has already engaged with and starving them of adjacent or contrarian material. Finally, a system that answers natural-language questions over a content corpus is tempted to place a large generative model on every request path (ranking, filtering, and search alike), which is both financially and operationally fragile: language-model inference is comparatively slow and costly, and a serving path that depends on it for every request inherits that latency and cost on every request, including the vast majority that do not need generative reasoning at all. A defensible design keeps generative inference out of the hot, high-frequency serving paths and reserves it for the specific step (conversational question answering) that actually requires it.
+
+\section{Motivation and System Summary}
+
+AI Compass was built to address these three problems together, as a real, deployed platform rather than a proposal. The system separates concerns across three codebases that communicate through a shared PostgreSQL database rather than through direct calls: a SQLAlchemy-based ingestion and intelligence pipeline (\texttt{app/}) that scrapes, enriches, embeds, scores, and clusters content from multiple source types; a Django backend (\texttt{web/}) that owns user-facing state (accounts, preferences, entitlements, behavioral events, and the conversational assistant) and serves it over a JSON API; and a Next.js single-page frontend that renders the feed, search, article and video detail views, and the assistant interface. The architecture follows a single governing principle, stated explicitly in the project's own roadmap: \emph{ingest once, personalize later}. Content is scraped, summarized, embedded, scored, and deduplicated exactly once, globally, by the pipeline; personalization (ranking, filtering, and digest assembly) happens per user at read time over that shared pool, so that per-user computation never re-triggers the comparatively expensive ingestion and enrichment work.
+
+\section{Objectives}
+
+The thesis documents and evaluates AI Compass as an already-built production system, with the following objectives:
+
+\begin{itemize}
+  \item Describe an ingestion architecture that unifies structurally different source types (research papers, code releases, video, government filings, funding announcements) behind a common adapter interface, with a single structured LLM call per item performing summarization, taxonomy assignment, and entity extraction together.
+  \item Present a personalized ranking mechanism that is deterministic, explainable, and free of generative-model calls in its serving path, while still incorporating a diversification mechanism to counteract filter-bubble effects.
+  \item Present a retrieval-augmented conversational assistant that answers questions grounded in the ingested corpus, with server-side verification that every citation the assistant emits resolves to an actual retrieved passage.
+  \item Evaluate the system honestly: report what has been measured (an offline ranking-quality harness, a single-machine transcription throughput figure, a live database snapshot) and state plainly what has not (no user study, no A/B test, no learned ranking model), rather than overstating evidence that does not exist.
+  \item Document the real, currently deployed production topology, including the infrastructure decisions and trade-offs that produced it.
+\end{itemize}
+
+\section{Contributions}
+
+This thesis makes the following contributions:
+
+\begin{itemize}
+  \item A fully specified, deterministic ranking formula that combines five weighted behavioral and content signals with a Maximal Marginal Relevance diversification step and a bounded random-exploration slice, together with an explicit accounting of which computed signals the formula does and does not use.
+  \item A passage-level retrieval-augmented-generation assistant whose citation markers are validated server-side against the retrieved passages before a response is considered grounded, together with a deterministic non-vector fallback for freshly indexed content.
+  \item A corrected and honestly reported offline evaluation methodology built around NDCG and MAP, presented with the explicit caveat, drawn from the evaluation module's own documentation, that at the project's present data scale a good score mainly demonstrates that the harness is implemented correctly rather than that one ranking configuration is superior to another.
+  \item A documented account of a real production deployment, including the infrastructure pivots that produced its current form and the specific engineering constraints (a free-tier network-transfer cap, a lack of available ARM capacity within a fixed deadline) that drove each pivot.
+\end{itemize}
+
+\section{Thesis Organization}
+
+The remainder of this thesis is organized into eleven further chapters. Chapter~\ref{ch:background} surveys the background and related work underlying personalization, semantic retrieval, and retrieval-augmented generation. Chapter~3, Problem Definition and Requirements, derives functional and non-functional requirements from the project's own architecture principles. Chapter~4, System Architecture and Design, presents the three-codebase split and the shared-database ownership boundary. Chapter~5, Data Acquisition and Content Intelligence, covers the source registry, adapter pattern, and enrichment pipeline. Chapter~6, Personalization and Recommendation, presents the ranking and diversification mechanisms in full. Chapter~7, Semantic Search and RAG Assistant, covers the retrieval-augmented conversational assistant. Chapter~8, Deep Media Processing, covers the speech-to-text and long-video chaptering pipeline. Chapter~9, System Implementation and Deployment, covers the backend, frontend, and production deployment topology. Chapter~10, Evaluation and Results, reports the measurements actually available. Chapter~11, Discussion, Limitations, and Future Work, consolidates the project's disclosed gaps and deferred design decisions. Chapter~12, Conclusion, closes the thesis.

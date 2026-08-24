@@ -1,0 +1,14 @@
+flowchart LR
+    A["Source Registry\n(16 sources: 9 adapter-driven +\n2 legacy stubs + user-submitted)"] --> B["Scrape\n(RssFeedScraper generic adapter,\nor bespoke JSON-API scraper)"]
+    B --> C{"Dedup\nON CONFLICT\nDO NOTHING\n(url / video_id unique)"}
+    C -->|new row| D["Enrichment\n1 structured Groq call:\nsummary, topics, entities,\ncontent_category, technical_depth"]
+    C -->|duplicate| X["Discarded\n(update lost, by design v1)"]
+    D --> E["Embed\nall-MiniLM-L6-v2, local, 384-dim\n(idempotent: exists-check + upsert)"]
+    E --> F["Cluster\nUnion-Find over pgvector kNN graph\ncosine >= 0.92 (near-duplicate dedup)"]
+    E --> G["Score\nheuristic quality formula\n(enriched + length + entities +\ntopics + freshness)"]
+    E --> H["RAG chunk + index\n~180-token passages, 40 overlap,\nHNSW cosine index"]
+    D --> I["Taxonomy + Entities\n27 controlled topics,\n4 entity types"]
+
+    U["User-submitted feed"] --> J["Relevance gate\nembedding-similarity vs. corpus\ncentroid + keyword fallback\n(NOT an LLM call)"]
+    J -->|accepted| A
+    J -->|rejected| Y["Rejected"]

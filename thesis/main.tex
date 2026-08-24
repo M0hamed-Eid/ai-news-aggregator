@@ -1,0 +1,181 @@
+% !TeX program = xelatex
+% AI Compass — Graduation Thesis
+% Digilians 9-Month Diploma in AI and Data Science
+%
+% IMPORTANT: This document REQUIRES the XeLaTeX engine (fontspec + polyglossia
+% for the bilingual English/Arabic front matter). On Overleaf: Menu -> Compiler
+% -> XeLaTeX. The "% !TeX program = xelatex" magic comment on line 1 sets this
+% automatically for most editors/Overleaf, but verify it if compilation fails.
+%
+% Font note: the official template specifies Times New Roman. True Times New
+% Roman is not redistributable on TeX Live/Overleaf for licensing reasons, so
+% this document uses "TeX Gyre Termes", a metric-compatible, freely-licensed
+% clone with (for body text purposes) visually indistinguishable shape and
+% identical line-breaking metrics. See the final QA notes for this and other
+% substitutions.
+
+\documentclass[12pt,a4paper]{report}
+
+% ---------- Page geometry (template: 2.5cm left/top, 1.5cm right/bottom) ----------
+\usepackage[left=2.5cm,top=2.5cm,right=1.5cm,bottom=1.5cm]{geometry}
+
+% ---------- Fonts ----------
+\usepackage{fontspec}
+\setmainfont{TeX Gyre Termes} % Times New Roman substitute (see note above) -- verified locally against "Times New Roman" as a stand-in (Overleaf's TeX Live ships TeX Gyre Termes; this dev machine does not)
+\usepackage{microtype} % better justification; also reduces overfull-box artifacts
+
+% ---------- Line-breaking safety net ----------
+% \texttt{...} content (heavily used for identifiers throughout this thesis)
+% does not hyphenate, so a long code identifier landing near a line's end can
+% overflow the right margin. Most such spots were fixed individually, but
+% this raises LaTeX's willingness to stretch interword spacing as a LAST
+% RESORT before ever letting a line overflow, as a safety net for anything
+% missed.
+\tolerance=1200
+\emergencystretch=3em
+\hbadness=10000
+
+% ---------- Math ----------
+\usepackage{amsmath,amssymb}
+
+% ---------- Spacing (template: 1.5 line spacing body text) ----------
+\usepackage{setspace}
+\onehalfspacing
+
+% ---------- Figures, tables, algorithms ----------
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage[ruled,vlined]{algorithm2e}
+\SetKwInput{KwInput}{Input}
+\SetKwInput{KwOutput}{Output}
+\usepackage{chngcntr}
+\counterwithin{algocf}{chapter} % keep Algorithm numbering chapter-scoped, matching Fig./Table (algorithm2e's float counter is "algocf", not "algorithm")
+
+% ---------- Captions: "Fig. n.n. Caption." / "Table n.n. Caption." ----------
+\usepackage{caption}
+\captionsetup[figure]{name=Fig.,labelsep=period,font=singlespacing,labelfont=bf}
+\captionsetup[table]{name=Table,labelsep=period,font=singlespacing,labelfont=bf}
+
+% ---------- Decorative page border on every page ----------
+\usepackage{eso-pic}
+\usepackage{tikz}
+\AddToShipoutPictureBG{%
+  \begin{tikzpicture}[remember picture, overlay]
+    \draw[line width=0.7pt]
+      ([xshift=0.9cm,yshift=0.9cm]current page.south west) rectangle
+      ([xshift=-0.9cm,yshift=-0.9cm]current page.north east);
+  \end{tikzpicture}%
+}
+
+% report.cls already resets figure/table/equation counters per chapter
+% (\thechapter.\arabic{figure} etc.) -- matches the template's Fig. 3.1 style.
+
+% ---------- Nomenclature (hand-built list; see frontmatter/nomenclature.tex) ----------
+% (No nomencl package: kept dependency-free and robust for Overleaf's default build.)
+
+% ---------- Front-matter Roman-numeral / body Arabic-numeral page numbering ----------
+% (\pagenumbering commands are invoked at the appropriate points in this file.)
+
+% ---------- Bibliography (IEEE numbered, square-bracket, verified references.bib) ----------
+\usepackage{cite}
+
+\usepackage{xcolor}
+\newcommand{\TODO}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
+
+% ---------- Cross-references ----------
+% bidi (pulled in by polyglossia just below, for the Arabic front matter)
+% has a documented, strict load-order requirement: it must come AFTER
+% amsmath/graphicx/caption/cite/xcolor (all above) and BEFORE hyperref/
+% cleveref (here) -- violating either direction is a hard compile error.
+\usepackage[hidelinks]{hyperref}
+\usepackage[nameinlink]{cleveref}
+
+% ---------- Reduce the large default whitespace above chapter titles ----------
+% bidi (pulled in by polyglossia below) hard-requires titlesec to load
+% BEFORE it -- but bidi's own RTL chapter-heading patch then silently
+% overrides titlesec's formatting anyway. The \titleformat/\titlespacing
+% calls are therefore deliberately re-issued a second time immediately
+% after \begin{document} below (after bidi has finished patching), so
+% titlesec's formatting is the one actually left in effect.
+\usepackage{titlesec}
+\titleformat{\chapter}[display]
+  {\normalfont\bfseries}{\Large\chaptertitlename\ \thechapter}{4pt}{\Large}
+\titlespacing*{\chapter}{0pt}{0pt}{12pt}
+
+% ---------- Bilingual (English + Arabic) ----------
+\usepackage{polyglossia}
+\setmainlanguage{english}
+\setotherlanguage{arabic}
+\newfontfamily\arabicfont[Script=Arabic]{Amiri}
+
+\title{AI Compass}
+\author{Mohammed Eid \and Ahmed Hossam \and Abdelrahman Saeed \and Mohammed Salama \and Abdelrahman Hussein}
+
+\begin{document}
+
+% Re-issued here (see comment above titlesec's \usepackage line): bidi has
+% now finished patching chapter-heading internals for RTL support, so
+% re-applying titlesec's formatting at this point makes it the one that
+% actually takes effect for the whole document.
+\titleformat{\chapter}[display]
+  {\normalfont\bfseries}{\Large\chaptertitlename\ \thechapter}{4pt}{\Large}
+\titlespacing*{\chapter}{0pt}{0pt}{12pt}
+
+% ======================= FRONT MATTER =======================
+% Title page and Approval Sheet are unnumbered (per template requirement
+% that margins/layout differ there and no page number is expected) and do
+% NOT consume a page-counter slot -- Roman-numeral counting begins at the
+% Abstract, matching the template's own Table-of-Contents skeleton (which
+% lists "Abstract ... I").
+\pagenumbering{roman}
+\input{frontmatter/titlepage}
+\input{frontmatter/approval}
+\pagenumbering{roman}
+\setcounter{page}{1}
+
+\input{frontmatter/abstract}
+
+\input{frontmatter/acknowledgments}
+
+\tableofcontents
+\clearpage
+\listoffigures
+\clearpage
+\listoftables
+\clearpage
+
+\input{frontmatter/nomenclature}
+
+% ======================= MAIN BODY (Arabic numerals, Chapter 1 = page 1) =======================
+\clearpage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+\input{chapters/01_introduction}
+\input{chapters/02_background}
+\input{chapters/03_requirements}
+\input{chapters/04_architecture}
+\input{chapters/05_data_pipeline}
+\input{chapters/06_recommendation}
+\input{chapters/07_rag}
+\input{chapters/08_deep_media}
+\input{chapters/09_implementation_deployment}
+\input{chapters/10_evaluation}
+\input{chapters/11_discussion}
+\input{chapters/12_conclusion}
+
+% ======================= REFERENCES =======================
+\bibliographystyle{ieeetr}
+\bibliography{references}
+
+% ======================= APPENDICES =======================
+\appendix
+\input{appendices/appendix_a_screenshots}
+\input{appendices/appendix_b_evaluation}
+
+% ======================= ARABIC FRONT-MATTER MIRROR (per official template layout) =======================
+\input{frontmatter/arabic_frontmatter}
+
+\end{document}

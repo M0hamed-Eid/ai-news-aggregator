@@ -1,0 +1,35 @@
+flowchart TD
+    subgraph CANDGEN["Candidate generation (union, cap 300)"]
+        direction LR
+        LEGA["Leg A: Recency\ntop 300 by published_at"]
+        LEGB["Leg B: Similarity\npgvector kNN on\nuser profile vector (150)\n(cold-start: onboarding-topic overlap)"]
+        LEGC["Leg C: Follows\nguaranteed inclusion\n(topic/entity/source/person)"]
+    end
+
+    ELIG["Eligibility filter\ndrop excluded sources/categories;\ndrop unsubscribed visibility=user sources"]
+
+    subgraph SCORE["Per-item scoring"]
+        direction TB
+        BASE["base = 0.35 interest + 0.20 quality\n+ 0.15 freshness + 0.15 source_affinity\n+ 0.15 novelty"]
+        MULT["x depth_mult x format_mult\nx lean_mult x reading_time_mult"]
+        FINAL["final_score (0-1) -> relevance_score (0-10)"]
+    end
+
+    MMR["MMR selection\nlambda=0.7: max(0.7 x score -\n0.3 x max cosine to already-picked)"]
+    EXPL["Exploration slice\n~12% of slots, weighted-random\nover leftovers (unseeded)"]
+    EXPLAIN["Template explanation\n(pure string composition, no LLM)"]
+    PERSIST[("user_rankings\nwholesale-replaced each run\nevery 3 hours")]
+
+    LEGA --> ELIG
+    LEGB --> ELIG
+    LEGC --> ELIG
+    ELIG --> BASE --> MULT --> FINAL
+    FINAL --> MMR --> EXPLAIN
+    FINAL --> EXPL --> EXPLAIN
+    EXPLAIN --> PERSIST
+
+    PERSIST --> API["Django JSON API\n(GET /api/news/feed/)"]
+
+    subgraph PUBLIC["Separate: public Home feed (non-personalized)"]
+        PBASE["0.65 x freshness + 0.35 x quality\n- same-source run-length penalty\n(computed inline per request, never persisted)"]
+    end

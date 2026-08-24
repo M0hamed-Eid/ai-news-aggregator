@@ -1,0 +1,38 @@
+\chapter{Offline Evaluation: Raw Per-User Results}
+\label{app:eval-raw}
+
+This appendix reproduces the per-user detail behind the aggregate findings discussed in Chapter~10. All figures are taken verbatim from the evaluation run of 2026-08-22 (see \texttt{app/eval/offline\_eval\_report.json} and \texttt{docs/EVALUATION.md} in the project repository).
+
+\begin{table}[htbp]
+\centering
+\caption{Per-user retrospective-correlation pass (Pass 2): known relevant events vs.\ overlap with the currently-stored ranked set. A dash indicates the user had zero known relevant events at all, so no score could be computed.}
+\label{tab:eval-per-user}
+\small
+\begin{tabular}{|>{\centering\arraybackslash}p{1.6cm}|>{\centering\arraybackslash}p{1.9cm}|>{\centering\arraybackslash}p{2.3cm}|>{\centering\arraybackslash}p{2.8cm}|>{\centering\arraybackslash}p{2.0cm}|>{\centering\arraybackslash}p{1.6cm}|}
+\hline
+\textbf{User ID} & \textbf{Ranked} & \textbf{Relevant} & \textbf{Overlap} & \textbf{NDCG@10} & \textbf{MAP} \\
+\hline
+1  & 50 & 43 & 0 & 0.0 & 0.0 \\
+\hline
+3  & 10 & 0  & -- & -- & -- \\
+\hline
+4  & 10 & 3  & 0 & 0.0 & 0.0 \\
+\hline
+5  & 1  & 0  & -- & -- & -- \\
+\hline
+6  & 10 & 0  & -- & -- & -- \\
+\hline
+7  & 10 & 0  & -- & -- & -- \\
+\hline
+8  & 10 & 0  & -- & -- & -- \\
+\hline
+9  & 10 & 0  & -- & -- & -- \\
+\hline
+28 & 10 & 0  & -- & -- & -- \\
+\hline
+29 & 10 & 2  & 0 & 0.0 & 0.0 \\
+\hline
+\end{tabular}
+\end{table}
+
+The chronological-recency and fixed-seed random-shuffle baselines (Pass 3) reorder the identical per-user item sets shown above and, for the same structural reason (zero overlap between the ranked set and the known-relevant set), also score 0.0 for every user in every metric. Re-running \texttt{python -m app.eval.run\_offline\_eval} at a later date, once sustained real usage has accumulated, will repopulate this table with new, potentially non-degenerate figures without requiring any further code changes.

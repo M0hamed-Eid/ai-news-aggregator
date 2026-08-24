@@ -1,0 +1,30 @@
+flowchart LR
+    subgraph ACQ["Transcript acquisition"]
+        direction TB
+        A["YouTube video scraped"] --> B{"Caption track found?\n(manual EN -> generated EN ->\ntranslated)"}
+        B -->|yes| C["content = transcript text"]
+        B -->|no| D["content = empty\n-> queue stt_jobs (status=queued)"]
+        D --> E["run_stt_dispatch_phase\nclaim: queued -> running\n(committed before dispatch,\nrace-safe)"]
+        E --> F["transcribe_video_task\n(Celery, stt queue)"]
+        F --> G{"Duration probe\n(yt-dlp, metadata only)\n<= 3h ceiling?"}
+        G -->|no| H["status = skipped_too_long"]
+        G -->|yes| I["Download audio (yt-dlp)\n+ faster-whisper\ndistil-large-v3, CPU/int8\n(measured ~1.76x real-time)"]
+        I --> C
+    end
+
+    subgraph CHAP["Chaptering and serving"]
+        direction TB
+        J{"Duration >= 1200s\n(long video)?"}
+        J -->|no| K["Normal single-pass enrichment\n(content[:10000] truncation applies)"]
+        J -->|yes| L["Chunk transcript\n~600s chunks, snapped to\nsegment boundaries, <90s\ntrailing slivers merged"]
+        L --> M["ChunkSummaryAgent\n1 Groq call per chunk (map)"]
+        M --> N["Concatenate chapter summaries\n(timestamped)"]
+        N --> O["EnrichmentAgent\n(reduce -- bypasses the\n10000-char truncation)"]
+        O --> P[("content_chunks\n+ content_enrichment")]
+        K --> P
+        P --> Q{"Viewer entitlement:\ndeep_video_summaries\n(Pro only)?"}
+        Q -->|Free| R["Chapter count shown,\ntitle/summary text blanked\n(locked preview)"]
+        Q -->|Pro| S["Full chaptered summary shown"]
+    end
+
+    C --> J

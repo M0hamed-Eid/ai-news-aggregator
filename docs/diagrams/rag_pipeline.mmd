@@ -1,0 +1,26 @@
+flowchart LR
+    subgraph RET["Retrieval"]
+        direction TB
+        Q["User question\n(+ page context, + last 8\nconversation messages)"] --> COND["Query condensation\nGroq 8B tier, temp=0,\nfallback = raw question on any failure"]
+        COND --> EMBEDQ["Embed query\nall-MiniLM-L6-v2, local"]
+        EMBEDQ --> RETR["Retrieve\npgvector HNSW cosine search\non rag_chunks, over-fetch 6x top_k=8"]
+        RETR --> ACL["Access-control filter\ndrop excluded sources/categories;\ndrop unsubscribed visibility=user sources"]
+        ACL --> SEL{"Any chunks\nsurvive?"}
+        SEL -->|yes| DIV["Diversity + budget selection\ngreedy, max 3 chunks/document,\n2200-token context budget"]
+        SEL -->|no, but current-page\ndocument is allowed| FALLBACK["Deterministic fallback\nraw page content, capped 9000 chars,\nsingle [S1] source"]
+        DIV --> PROMPT["Assemble system prompt\nnumbered sources, require [S#] citations,\nrequest SUGGESTIONS trailer"]
+        FALLBACK --> PROMPT
+    end
+
+    subgraph GEN["Generation"]
+        direction TB
+        MODE{"Transport"}
+        MODE -->|non-streaming| GEN1["AssistantAgent.generate()\nGroq 70B, max_tokens=700, temp=0.3\n(Celery interactive worker)"]
+        MODE -->|streaming| GEN2["Django chat ASGI container\nown Groq client, SSE token frames\n(one disclosed LLM call inside web/)"]
+        GEN1 --> CITE["Citation validation\nstrip unresolved [S#] markers;\ngrounded=False only if ALL markers\nfailed to resolve"]
+        GEN2 --> CITE
+        CITE --> SUG["Extract SUGGESTIONS trailer\n(same completion, zero extra LLM call)"]
+        SUG --> OUT["Answer + resolved citations\n+ follow-up chips"]
+    end
+
+    PROMPT --> MODE

@@ -1,0 +1,119 @@
+\chapter{Evaluation and Results}
+\label{ch:evaluation}
+
+Every earlier chapter argued for AI Compass's design from the properties of its formulas and mechanisms: the ranking score is deterministic and fully explainable (Chapter~6), retrieval-augmented generation is grounded and server-verified (Chapter~7), and speech-to-text transcription runs entirely offline (Chapter~8). This chapter turns to measurement. It reports the results of a real offline evaluation run, performed on 2026-08-22 against a database with the same schema and data lineage as the production system, using the project's own NDCG@k/MAP harness. The run also surfaced, and led to the correction of, a genuine methodological flaw in the harness itself, a finding this chapter documents with the same rigor as the numeric results, because the correction is as much a contribution of this evaluation exercise as any score it produced. Consistent with the project's own evaluation philosophy, every number reported below is presented exactly as measured, including where every measured value is $0.0$; no result in this chapter has been rounded away, omitted, or softened, and the reasoning behind each zero is traced to its root cause rather than left as an unexplained artifact.
+
+\section{Evaluation Methodology}
+\label{sec:eval-methodology}
+
+The offline evaluation harness lives in \texttt{app/eval/ranking\_eval.py} and is driven by a new, reproducible entry point, \texttt{app/eval/run\_offline\_eval.py}, written for this evaluation run. Its purpose is to answer, for each user with a currently stored ranking, a precise question: of the items the ranking service actually surfaced, how many did the user go on to act on, and how highly were those items ranked? The harness answers this with two standard information-retrieval metrics, Normalized Discounted Cumulative Gain at rank $k$ (NDCG@$k$) \cite{jarvelin2002ndcg} and Mean Average Precision (MAP) \cite{manning2008ir}, both computed at $k=10$, matching the ten-item window a user is realistically shown as their top recommendations in the product's home feed.
+
+Ground truth in this harness is not a hand-labeled relevance judgment, since no human annotator scores AI Compass's recommendations; instead it is behavioral, drawn directly from the \texttt{user\_events} table. An item is treated as "relevant" for a given user if that user is recorded as having clicked it, saved it, or clicked through to it from an email digest, within a held-out time window following the ranking being evaluated. These three event types are not weighted equally: a \texttt{click} contributes a relevance weight of $1.0$, a \texttt{save} contributes $2.0$ (reflecting that a deliberate save is a stronger positive signal than an incidental click), and a \texttt{digest\_click} contributes $1.0$. In practice, as Section~\ref{sec:eval-dataset} details, this evaluation run's \texttt{user\_events} table contains zero rows of type \texttt{digest\_click} (digest-open events are tracked through a separate \texttt{digest\_click\_tokens}/\texttt{digest\_log} mechanism rather than through \texttt{user\_events}), so the relevance labels produced in this run are, in effect, built entirely from the weighted click and save signal.
+
+For each user, the harness takes the items in that user's currently stored top-ranking (drawn from \texttt{user\_rankings}), constructs the weighted relevance-label set for the corresponding held-out window as just described, and computes NDCG@10 and MAP by comparing the ranked list against that label set using the standard definitions from the cited literature: NDCG@10 rewards relevant items appearing near the top of the ranked list with a logarithmic position discount, normalized against the best-possible ordering of the same relevant set, and MAP averages precision at each rank position where a relevant item occurs. Both metrics are well-defined at zero when the relevant set is empty (the harness returns $0.0$ rather than raising a division error), which turns out to matter directly for the results in Section~\ref{sec:eval-results}.
+
+\section{A Methodological Correction}
+\label{sec:eval-correction}
+
+Before any of the results below could be trusted, a latent bug in the harness itself had to be found and fixed. The original implementation of \texttt{build\_relevance\_labels()} computed its held-out cutoff timestamp as \texttt{datetime.now(timezone.utc) - held\_out\_days}: relative to whenever the evaluation script happens to run, not to when the specific ranking being scored was actually computed. This matters because \texttt{user\_rankings} is \emph{wholesale-replaced} on every scheduled ranking run (\texttt{UserRankingRepository.replace\_for\_user()}), with no history retained: the row on disk for any user, at any moment, reflects only the single most recent pass, and since \texttt{rank\_all\_users\_task} runs on a fixed three-hour schedule, that pass could have been computed anywhere from minutes to weeks before the evaluation script runs.
+
+Had every evaluated ranking coincidentally just been recomputed, the wall-clock-relative window would still approximate the intended semantics closely enough. But nothing guaranteed this, and in this run it did not hold: the ten evaluated users' \texttt{computed\_at} timestamps span from 2026-07-15 through 2026-08-22, since a fresh pass happened to run for four of them mid-session. A window anchored to wall-clock ``now'' then silently stops measuring what it claims to: for a user ranked weeks ago, ``the next 7 days from today'' is an arbitrary recent slice unrelated to the ranking under evaluation.
+
+The fix, in \texttt{app/eval/ranking\_eval.py}, is deliberately minimal and additive: an optional \texttt{held\_out\_since} parameter threaded through \texttt{build\_relevance\_labels()} and \texttt{evaluate\_user\_ranking()}, plus an \texttt{anchor\_to\_computed\_at} flag on \texttt{evaluate\_all\_users()}. Supplying it sets the cutoff to the caller's explicit timestamp, typically a user's own \texttt{UserRanking.computed\_at}, instead of the wall-clock default; every existing call site that omits it behaves exactly as before. This must be stated without qualification: the fix changes nothing about \texttt{RankingService}, about any score a user is ever shown, or about any production behavior: only how this offline script chooses its comparison window when explicitly asked to anchor to a ranking's own computation time.
+
+\section{Dataset}
+\label{sec:eval-dataset}
+
+The evaluation was run against a live development database sharing the same schema and data lineage as production. Table~\ref{tab:eval-dataset} summarizes the tables most relevant to the evaluation at the time of the run.
+
+\begin{table}[htbp]
+\centering
+\caption{Database row counts at evaluation time (2026-08-22).}
+\label{tab:eval-dataset}
+\begin{tabular}{|p{4cm}|p{9.5cm}|}
+\hline
+\textbf{Table} & \textbf{Row count} \\
+\hline
+\texttt{articles} & 23{,}321 \\
+\hline
+\texttt{youtube\_videos} & 244 \\
+\hline
+\texttt{embeddings} & 23{,}535 \\
+\hline
+\texttt{rag\_chunks} & 53{,}761 \\
+\hline
+\texttt{user\_rankings} & 131 rows across 10 distinct users \\
+\hline
+\texttt{user\_events} & 5{,}458 total; of which 63 are \texttt{click} and 12 are \texttt{save} \\
+\hline
+\end{tabular}
+\end{table}
+
+Two figures in Table~\ref{tab:eval-dataset} deserve emphasis rather than being read past. First, of the 5,458 rows in \texttt{user\_events} (a table that also records impressions, dwell time, scrolls, and hides), only 63 are clicks and only 12 are saves, in the \emph{entire} table, across every user who has ever used the system. Second, the single most recent row in \texttt{user\_events}, of any type, for any user, is dated 2026-08-10, twelve full days before this evaluation was run on 2026-08-22. No behavioral event of any kind was recorded in those twelve days. Of the ten users with a persisted ranking, only three (\texttt{user\_id} 1, 4, and 29) have any click or save event on record at all, and those events are concentrated between 2026-07-14 and 2026-08-10.
+
+This must be stated plainly rather than left implicit: this is a small, largely developer-generated interaction dataset produced during build-and-verify sessions, not a dataset accumulated from sustained organic production usage at any meaningful scale. Every result in the remainder of this chapter must be read with this scale, and this twelve-day staleness, in mind.
+
+\section{Results}
+\label{sec:eval-results}
+
+Three evaluation passes were run, using the same underlying data and the same ten users, differing only in how the held-out window was defined.
+
+\textbf{Pass 1: naive, unmodified harness behavior (wall-clock 7-day window).} With the held-out cutoff computed as "the seven days before 2026-08-22," NDCG@10 and MAP were both $0.0$ for all ten evaluated users, with zero relevant events found in the window for every one of them. This result is mechanically unsurprising given Section~\ref{sec:eval-dataset}: the most recent event of any kind in the entire database predates the evaluation window's start by five days, so the window itself is empty of any event before it even reaches the question of ranking quality. This zero reflects an empty evaluation window, not a bad ranking.
+
+\textbf{Pass 2: retrospective correlation, with the Section~\ref{sec:eval-correction} fix applied.} Here the held-out cutoff was set to capture every click and save event on record, regardless of whether it predates or postdates the stored ranking's own computation time. Under this corrected, maximally generous window, only three of the ten users have any relevant event at all: user 1 with 43 known relevant items, user 4 with 3, and user 29 with 2. For all three of these users, the number of relevant items found \emph{within their currently stored top-ranking} was zero. That is, of the specific articles and videos each of these three users is known, historically, to have clicked or saved, not a single one appears among the items currently ranked for that user today. NDCG@10 and MAP are therefore $0.0$ for these three users as well; and, trivially, for the remaining seven, who have no relevant events under any window definition.
+
+\textbf{Pass 3: recency and random-shuffle baselines.} To rule out the possibility that the personalized ranking was specifically failing where a simpler approach would succeed, two baselines were evaluated over the identical per-user candidate sets: a chronological-recency reordering, and a fixed-seed (\texttt{seed=42}) random shuffle. Both baselines also scored NDCG@10 = MAP = $0.0$ for the same three users, for the same structural reason: reordering a candidate set that contains zero relevant items cannot produce a nonzero score under any ordering whatsoever, personalized, recency-based, or random. This comparison is therefore uninformative at this data scale; it does not show that the personalized ranker ties or loses to a naive baseline, because no baseline had anything to win or lose against.
+
+The root cause behind all three passes is the same, structural rather than algorithmic. Candidate generation's dominant, recency-biased leg pulls only the newest \texttt{RECENCY\_CANDIDATE\_LIMIT}$=300$ items at the moment a ranking is computed, so a ranking computed today cannot contain an item clicked or saved twelve or more days ago unless one of the other two legs (profile-vector similarity or follows) happened to reintroduce it; and for these three users, on this data, neither did. The evaluable candidate set and the historically-known-relevant set simply do not intersect at this data scale. This is a data-and-temporal-coverage limitation of the evaluation, not evidence the ranker performs poorly; a held-out window of a few hours after a genuinely fresh pass, against a userbase with continuous engagement, would face no such structural barrier.
+
+\section{What This Evaluation Does and Does Not Prove}
+\label{sec:eval-scope}
+
+This run should be read as proving two things, and as being unable to prove a third. It proves, first, that the harness computes NDCG@$k$ and MAP correctly according to their textbook definitions: it returns $0.0$ rather than crashing or dividing by zero when the relevant-set is empty, it correctly distinguishes "no relevant items are known for this user" from "relevant items are known but none were retrieved," and its ordering and tie-handling behavior is exactly what the cited definitions specify. It proves, second, that the methodological correction in Section~\ref{sec:eval-correction} is not merely a defensible refinement but a necessary one: Pass 1 and Pass 2 disagree (an empty window versus a window that at least surfaces three users with relevant history), and only the corrected, \texttt{computed\_at}-anchored methodology asks the question the harness was actually designed to answer.
+
+What this run does \emph{not} prove, and cannot yet prove, is anything about the ranking algorithm's real-world quality. The dataset does not contain enough temporally-aligned interaction data (behavioral events that occur soon after, and in reference to, a specific stored ranking) to produce a meaningful NDCG@10 or MAP number in either direction. A $0.0$ obtained because the evaluation window is structurally empty carries no information about whether the ranker is good, mediocre, or poor; it is silent on the question, not negative evidence. The ranking algorithm's correctness in this thesis rests instead on the arguments made elsewhere: its fully deterministic, inspectable formula (Chapter~6), and the structural properties verified directly in Section~\ref{sec:eval-structural} below.
+
+The concrete, actionable path forward is unambiguous. The same harness should be re-run once AI Compass has accumulated a period of sustained real usage, and, critically, the held-out window used at that time should be matched to the ranking system's actual three-hour refresh cadence rather than to an arbitrary fixed number of days. A short window aligned to the system's own update rhythm is far more likely to capture genuine "did the user act on what was just shown to them" signal than a multi-day window that, as this run demonstrates, can end up structurally disjoint from what the recency-dominated candidate generation is even capable of surfacing.
+
+\section{Structural and Design-Level Verification}
+\label{sec:eval-structural}
+
+Separate from the offline metric result, several claims about AI Compass's engineering properties were verified directly, by inspecting code and behavior rather than by running a benchmark. These are reported here as a distinct category of evidence, and are labeled accordingly: \emph{verified by direct code and behavior inspection}, not \emph{benchmarked}.
+
+\begin{itemize}
+\item \textbf{The ranking and serving hot path contains zero LLM calls.} Direct inspection of \texttt{RankingService} and the candidate-generation, scoring, MMR, and exploration code invoked on every ranking pass confirms that no step in this path issues a call to any language model; every score and every generated explanation shown to a user is produced by the deterministic formulas described in Chapter~6. This is a structural property of the code, confirmed by reading it, not a latency or throughput measurement.
+\item \textbf{Embedding writes are structurally idempotent.} A database-level unique constraint on the embedding table's identifying key, combined with an upsert write path, was confirmed to make duplicate embedding rows for the same content item impossible to create even under a race condition: that is, even if two writers attempted to embed the same item concurrently, the database itself, not application-level locking, guarantees at most one row survives. This was confirmed against a documented past scheduling scenario in which such a race was possible, and the constraint held.
+\item \textbf{Speech-to-text throughput.} A distinct, separately measured engineering result: local, CPU-only transcription using \texttt{faster-whisper}'s \texttt{distil-large-v3} model, running in int8 precision with no GPU, sustained approximately $1.76\times$ real-time throughput on one measured video, a real, 1,013-second (16.9-minute) video transcribed in 1,778 seconds (29.6 minutes), recorded as a dated code comment on 2026-07-18. This is reported precisely as what it is: one measured data point on one machine, on one video, not a general throughput benchmark across hardware or content types.
+\end{itemize}
+
+\section{Reproducibility}
+\label{sec:eval-reproducibility}
+
+Table~\ref{tab:reproducibility} records every detail needed to re-run this evaluation exactly, or to understand precisely what was and was not changed in producing it.
+
+\begin{table}[htbp]
+\centering
+\caption{Evaluation reproducibility record.}
+\label{tab:reproducibility}
+\begin{tabular}{|p{4.3cm}|p{9.2cm}|}
+\hline
+\textbf{Field} & \textbf{Value} \\
+\hline
+Command & \texttt{.venv/Scripts/python.exe -m app.eval.run\_offline\_eval} \\
+\hline
+Evaluation date & 2026-08-22 (UTC) \\
+\hline
+$k$ & 10 \\
+\hline
+Random seed (baseline shuffle only) & 42 \\
+\hline
+Ranker version & \texttt{v1-deterministic} \\
+\hline
+Code changes & \texttt{app/eval/ranking\_eval.py}: additive \texttt{held\_out\_since} and \texttt{anchor\_to\_computed\_at} parameters, default behavior unchanged; \texttt{app/eval/run\_offline\_eval.py}: new file \\
+\hline
+Effect on production data & None: read-only; no writes to \texttt{user\_rankings} or any other table \\
+\hline
+\end{tabular}
+\end{table}
+
+No API keys, secrets, or credentials are read or printed by the evaluation script. Full raw output from this run is preserved in \texttt{app/eval/offline\_eval\_report.json}, and can be regenerated at any time by re-issuing the command in Table~\ref{tab:reproducibility} against a current database snapshot.

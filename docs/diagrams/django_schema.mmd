@@ -10,6 +10,8 @@ erDiagram
     USERS ||--o{ USER_EVENTS : "generated"
     USERS ||--o{ SAVED_ITEMS : "saved"
     USERS ||--o| STRIPE_CUSTOMERS : "billed via"
+    USERS ||--o{ CHAT_CONVERSATIONS : "starts (RAG assistant, M14)"
+    CHAT_CONVERSATIONS ||--o{ CHAT_MESSAGES : "contains"
 
     USERS {
         bigint id PK
@@ -17,6 +19,7 @@ erDiagram
         string plan "free or pro"
         datetime plan_expires_at
         bool email_verified
+        bool is_staff
     }
     USER_PROFILES {
         bigint id PK
@@ -29,10 +32,11 @@ erDiagram
         string frequency
         string expertise_level
         string format_balance
+        int max_items
     }
     USER_EVENTS {
         bigint id PK
-        string event_type "impression/click/dwell/save/hide/search"
+        string event_type "impression/click/dwell/save/hide/search/scroll"
         string content_type
         bigint content_id
         datetime created_at
@@ -46,4 +50,24 @@ erDiagram
     USER_SOURCE_SUBSCRIPTIONS {
         bigint id PK
         bigint source_id "FK into pipeline's sources table, db_constraint=False"
+    }
+    CHAT_CONVERSATIONS {
+        bigint id PK
+        bigint user_id FK
+        string scope_type "document/topic/kb, per-message override"
+        datetime created_at
+    }
+    CHAT_MESSAGES {
+        bigint id PK
+        bigint conversation_id FK
+        string role "user/assistant"
+        text content
+        jsonb citations
+        bool grounded
+    }
+    STRIPE_CUSTOMERS {
+        bigint id PK
+        bigint user_id FK
+        string stripe_customer_id
+        string status
     }
