@@ -33,8 +33,21 @@ const DJANGO_PREFIXES = [
   "/assistant",
   "/healthz",
   "/r",
-  "/static",
 ];
+
+// Static files ONLY -- never a Django view, so never subject to Django's
+// APPEND_SLASH convention the trailing-slash rule below exists for. Kept
+// out of DJANGO_PREFIXES deliberately: confirmed live (web-1's own access
+// log) that pairing /static with the trailing-slash rule made Django
+// receive "/static/img/sources/reddit.png/" for a request that had NO
+// trailing slash -- WhiteNoise 404s on that (the real file has none),
+// which was ALSO the unexplained root cause of an earlier "CSS 404 through
+// the Vercel proxy" report. `:path*/`'s source pattern apparently isn't as
+// strictly anchored to a literal trailing "/" as intended once two
+// same-prefix catch-all rules are both in play -- rather than chase that
+// further, /static just never gets a trailing-slash rule at all, since it
+// never needs one.
+const STATIC_PREFIX = "/static";
 
 const nextConfig: NextConfig = {
   typescript: {
@@ -67,16 +80,23 @@ const nextConfig: NextConfig = {
     // wildcard) preserves it exactly for URLs that have one, while the
     // second rule still covers extension-bearing paths that never carry a
     // trailing slash (e.g. /static/css/app.css).
-    return DJANGO_PREFIXES.flatMap((prefix) => [
+    return [
+      ...DJANGO_PREFIXES.flatMap((prefix) => [
+        {
+          source: `${prefix}/:path*/`,
+          destination: `${origin}${prefix}/:path*/`,
+        },
+        {
+          source: `${prefix}/:path*`,
+          destination: `${origin}${prefix}/:path*`,
+        },
+      ]),
+      // Single rule, no trailing-slash variant -- see STATIC_PREFIX's own comment.
       {
-        source: `${prefix}/:path*/`,
-        destination: `${origin}${prefix}/:path*/`,
+        source: `${STATIC_PREFIX}/:path*`,
+        destination: `${origin}${STATIC_PREFIX}/:path*`,
       },
-      {
-        source: `${prefix}/:path*`,
-        destination: `${origin}${prefix}/:path*`,
-      },
-    ]);
+    ];
   },
 };
 
