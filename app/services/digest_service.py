@@ -85,8 +85,20 @@ from app.utils.youtube import youtube_thumbnail_url
 
 logger = logging.getLogger(__name__)
 
-# Raise this if you have a very large DB — set to None for no limit
-_SUMMARISE_BATCH_LIMIT = None
+# [2026-08-28] Was None ("no limit") -- confirmed live this let a single
+# sustained Groq rate-limit window (HTTP 429 on every call, one key, no
+# failover) turn one _enrich_unenriched() call into a multi-DAY grind
+# through the entire unenriched-article backlog (each failed call still
+# costs ~75s across 4 retries), which blocked run_digest_phase() from EVER
+# reaching its own email-sending step, and blocked run_deep_video_phase()
+# (which only runs after the digest phase) from ever running -- 6 days with
+# zero digest emails sent and zero new videos enriched/chaptered, even
+# though nothing was actually crashing. Bounding this means enrichment can
+# still fail/backlog under sustained rate-limiting without ever again
+# blocking the phases that come after it in the same pipeline run. Raise
+# this (or set back to None) once multi-key Groq failover or a faster path
+# makes multi-day backlogs a non-issue.
+_SUMMARISE_BATCH_LIMIT = 20
 
 # Base URL of the Django web app — used to build tracked digest-click
 # redirect links (M7). Read directly via os.getenv (not python-dotenv here)
