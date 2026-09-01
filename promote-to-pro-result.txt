@@ -1,0 +1,11 @@
+Plan update — 2026-09-01T06:26:44Z
+email: marwaashraf5814@gamil.com
+action: promote_to_pro
+
+UPDATE 1
+=== resulting row ===
+ id |           email           | plan | plan_expires_at 
+----+---------------------------+------+-----------------
+ 40 | marwaashraf5814@gamil.com | pro  | 
+(1 row)
+
